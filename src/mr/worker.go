@@ -93,7 +93,7 @@ func writeKva(kva []KeyValue, num int, nReduce int) {
 	tmpfnames := []string{}
 	encoders := []*json.Encoder{}
 	for i := 0; i < nReduce; i++ {
-		tmpf, err := os.CreateTemp(os.TempDir(), "mrtemp-")
+		tmpf, err := os.CreateTemp(".", "mrtemp-")
 		if err != nil {
 			log.Fatal("fail to create temp file", err)
 		}
