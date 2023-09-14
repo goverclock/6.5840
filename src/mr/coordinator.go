@@ -149,7 +149,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		t.Fnum = -1
 		t.Status = Unassigned
 		c.mapTasks = append(c.mapTasks, t)
-		dprint(t)
+		dprint("coor", t)
 	}
 	for i := 0; i < nReduce; i++ { // init reduce tasks
 		t := Task{}
