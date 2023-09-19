@@ -38,7 +38,7 @@ func (rf *Raft) heartbeatTicker() {
 				}
 			}(i)
 		}
-		time.Sleep(150 * time.Millisecond)	// heart beat interval
+		time.Sleep(120 * time.Millisecond)	// heart beat interval
 	}
 }
 
@@ -48,13 +48,13 @@ func (rf *Raft) electTicker() {
 		// Your code here (2A)
 		// Check if a leader election should be started.
 
-		// 700 ~ 1000ms election timeout
+		// 600 ~ 900ms election timeout
 		diff := time.Since(rf.LastHeartBeat())
 		if diff < randTimeout {
 			time.Sleep(randTimeout - diff)
 			continue
 		}
-		randTimeout = time.Duration(700+(rand.Int()%300)) * time.Millisecond
+		randTimeout = time.Duration(600+(rand.Int()%300)) * time.Millisecond
 
 		if rf.State() == Leader {
 			continue
