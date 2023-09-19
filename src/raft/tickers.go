@@ -38,7 +38,7 @@ func (rf *Raft) heartbeatTicker() {
 				}
 			}(i)
 		}
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)	// heart beat interval
 	}
 }
 
@@ -49,7 +49,7 @@ func (rf *Raft) electTicker() {
 		// Check if a leader election should be started.
 
 		// 700 ~ 1000ms election timeout
-		diff := time.Since(rf.LastAppendEntryTime())
+		diff := time.Since(rf.LastHeartBeat())
 		if diff < randTimeout {
 			time.Sleep(randTimeout - diff)
 			continue
@@ -61,13 +61,9 @@ func (rf *Raft) electTicker() {
 		}
 
 		// election timeout
+		rf.SetLastHeartBeat(time.Now()) // reset election timeout
 		// become candidate, init election
-		rf.SetLastAppendEntryTime(time.Now()) // reset election timeout
-		rf.mu.Lock()
-		rf.state = Candidate
-		rf.currentTerm++
-		rf.votedFor = rf.me // vote for self
-		rf.mu.Unlock()
+		rf.toCandidate()
 		Debug(dLeader, "S%d become candidate", rf.Me())
 		Debug(dLeader, "S%d init election", rf.Me())
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
@@ -93,9 +89,8 @@ func (rf *Raft) electTicker() {
 					// if a candidate or leader discovers that its term is out of date,
 					// it immediately reverts to follower state
 					if rf.CurrentTerm() < reply.Term {
-						rf.incrementTermTo(reply.Term)
+						rf.toFollower(reply.Term)
 						Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-						rf.SetState(Follower)
 						Debug(dLeader, "S%d become follower", rf.Me())
 					} else if reply.VoteGranted {
 						Debug(dLeader, "S%d got vote from S%d", rf.Me(), pi)
@@ -112,14 +107,14 @@ func (rf *Raft) electTicker() {
 					if rf.State() == Candidate && votes >= len(rf.peers)/2+1 {
 						rf.SetState(Leader)
 						Debug(dLeader, "S%d become leader", rf.Me())
-						rf.SetLastAppendEntryTime(time.Now())	// reset election timeout
+						rf.SetLastHeartBeat(time.Now())	// reset election timeout
 					}
 				case <-quit:
 					return
 				}
 			}
 		}()
-		diff = time.Since(rf.LastAppendEntryTime())
+		diff = time.Since(rf.LastHeartBeat())
 		if diff < randTimeout {
 			time.Sleep(randTimeout - diff)
 		}

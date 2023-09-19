@@ -70,8 +70,9 @@ type Raft struct {
 	votedFor    int // -1 for null
 
 	// timers
-	lastAppendEntryTime time.Time
-	state               State
+	lastHeartBeat time.Time		// time of receiving last heart beat(AppendEntry)
+
+	state State
 }
 
 // return currentTerm and whether this server
@@ -189,7 +190,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.votedFor = -1
 
-	rf.lastAppendEntryTime = time.Now()
+	rf.lastHeartBeat = time.Now()
 	rf.state = Follower
 
 	// Your initialization code here (2A, 2B, 2C).
@@ -215,21 +216,22 @@ func (rf *Raft) CurrentTerm() int {
 	return rf.currentTerm
 }
 
-func (rf *Raft) incrementTerm() {
+// convert to candidate, increment term, vote for self
+func (rf *Raft) toCandidate() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.currentTerm++
-	rf.votedFor = -1
+	rf.votedFor = rf.me
+	rf.state = Candidate
 }
 
-func (rf *Raft) incrementTermTo(t int) {
+// convert to follower, set term to t, reset voteFor
+func (rf *Raft) toFollower(t int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.currentTerm >= t {
-		return
-	}
 	rf.currentTerm = t
 	rf.votedFor = -1
+	rf.state = Follower
 }
 
 func (rf *Raft) VotedFor() int {
@@ -244,16 +246,16 @@ func (rf *Raft) SetVotedFor(v int) {
 	rf.votedFor = v
 }
 
-func (rf *Raft) LastAppendEntryTime() time.Time {
+func (rf *Raft) LastHeartBeat() time.Time {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.lastAppendEntryTime
+	return rf.lastHeartBeat
 }
 
-func (rf *Raft) SetLastAppendEntryTime(t time.Time) {
+func (rf *Raft) SetLastHeartBeat(t time.Time) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.lastAppendEntryTime = t
+	rf.lastHeartBeat = t
 }
 
 func (rf *Raft) State() State {
@@ -265,5 +267,5 @@ func (rf *Raft) State() State {
 func (rf *Raft) SetState(st State) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.state = st;
+	rf.state = st
 }

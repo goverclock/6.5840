@@ -49,9 +49,8 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 		return
 	}
 	if  rf.CurrentTerm() < args.Term { // step down to follower
-		rf.incrementTermTo(args.Term)
+		rf.toFollower(args.Term)
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		rf.SetState(Follower)
 		Debug(dLeader, "S%d become follower(vote)", rf.Me())
 	}
 	if rf.VotedFor() == -1 || rf.VotedFor() == args.CandidateId {
@@ -74,11 +73,10 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 
 	// reset election timeout
 	Debug(dLeader, "S%d reset elec timeout", rf.Me())
-	rf.SetLastAppendEntryTime(time.Now())
+	rf.SetLastHeartBeat(time.Now())
 	if rf.CurrentTerm() < args.Term {
-		rf.incrementTermTo(args.Term)
+		rf.toFollower(args.Term)
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		rf.SetState(Follower)
 		Debug(dLeader, "S%d become follower(append)", rf.Me())
 	}
 	reply.Term = rf.CurrentTerm()
