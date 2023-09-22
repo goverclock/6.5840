@@ -2,10 +2,9 @@ package raft
 
 import (
 	"sync"
-	"time"
 )
 
-var rpcLock sync.Mutex	// should be acquired whenever invoke a RPC handler
+var rpcLock sync.Mutex // should be acquired whenever invoke a RPC handler
 
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
@@ -22,16 +21,18 @@ type RequestVoteReply struct {
 }
 
 type AppendEntryArgs struct {
-	Term     int // leader's term
-	LeaderId int
-	// prevLogIndex	int
-	// Entries		[]Entry
-	// LeaderCommit	int
+	Term         int // leader's term
+	LeaderId     int
+	PrevLogIndex int        // index of log entry immediately preceding new ones
+	PrevLogTerm  int        // term of prevLogIndex entry
+	Entries      []LogEntry // log entry to replicate(empty for heart beat)
+	LeaderCommit int        // leader's commitIndex
 }
 
 type AppendEntryReply struct {
-	Term int // currentTerm, for leader to update itself
-	// Success bool
+	Term    int  // currentTerm, for leader to update itself
+	Success bool // true if follower contained entry matching
+	// prevLogIndex and prevLogTerm
 }
 
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -48,38 +49,75 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 	if args.Term < rf.CurrentTerm() {
 		return
 	}
-	if  rf.CurrentTerm() < args.Term { // step down to follower
+	if rf.CurrentTerm() < args.Term { // step down to follower
 		rf.toFollower(args.Term)
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		Debug(dLeader, "S%d become follower(vote)", rf.Me())
+		Debug(dClient, "S%d become follower(vote)", rf.Me())
+		rf.ResetLastHeartBeat()
 	}
 	if rf.VotedFor() == -1 || rf.VotedFor() == args.CandidateId {
 		// TODO: check if log is up to date
 		rf.SetVotedFor(args.CandidateId)
 		reply.VoteGranted = true
-		Debug(dLeader, "S%d voted S%d", rf.Me(), args.CandidateId)
+		Debug(dVote, "S%d voted S%d", rf.Me(), args.CandidateId)
+		rf.ResetLastHeartBeat()
 	}
 }
 
 func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rpcLock.Lock()
 	defer rpcLock.Unlock()
-	// receiver implementation
-	// 1. reply false if term < currentTerm
-	// 2. reply false if log doesn't contain an entry at preLogIndex whose
-	// 	term matches prevLogTerm
-	// 3. ...
-	// 4. ...
 
+	if len(args.Entries) > 1 {
+		panic("should only append at most 1 entry at one time")
+	}
 	// reset election timeout
-	Debug(dLeader, "S%d reset elec timeout", rf.Me())
-	rf.SetLastHeartBeat(time.Now())
+	rf.ResetLastHeartBeat()
+
+	// if find higher term, step down
 	if rf.CurrentTerm() < args.Term {
 		rf.toFollower(args.Term)
+		Debug(dClient, "S%d become follower(append)", rf.Me())
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		Debug(dLeader, "S%d become follower(append)", rf.Me())
+		rf.ResetLastHeartBeat()
 	}
+	defer Debug(dLog, "S%d reply %v", rf.me, reply)
+
+	// receiver implementation
 	reply.Term = rf.CurrentTerm()
+	reply.Success = true
+	// 1. reply false if term < currentTerm
+	if rf.CurrentTerm() > args.Term {
+		reply.Success = false
+		return
+	}
+	// TODO: 2. reply false if log doesn't contain an entry at preLogIndex whose
+	// 	term matches prevLogTerm
+	logLen := rf.LogLen()
+	prevInd := args.PrevLogIndex
+	// if logLen <= prevInd {
+	// 	reply.Success = false
+	// 	return
+	// } else if prevInd != -1 && rf.LogAt(prevInd).Term != args.PrevLogTerm {
+	// 	reply.Success = false
+	// 	return
+	// }
+
+	if len(args.Entries) != 0 { // heart beat
+		// 3. if an existing entry conflicts with a new one(same index, different term),
+		//  delete the existing entry and all that follow it
+		entry := args.Entries[0]
+		if logLen > prevInd+1 && rf.LogAt(prevInd+1).Term != entry.Term {
+			rf.LogRemoveFrom(prevInd + 1)
+		}
+		// 4. append any new entries not already in the log
+		rf.LogAppend(entry)
+	}
+	// 5. if leaderCommit > commitIndex, set commitIndex =
+	//  min(leaderCommit, index of last new entry)
+	if args.LeaderCommit > rf.CommitIndex() {
+		rf.SetCommitIndex(min(args.LeaderCommit, prevInd+1))
+	}
 }
 
 // example code to send a RequestVote RPC to a server.

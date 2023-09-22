@@ -49,6 +49,11 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
+type LogEntry struct {
+	Term    int
+	Command interface{}
+}
+
 type State int
 
 const (
@@ -66,13 +71,21 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
+	// persistent state on all servers
 	currentTerm int
 	votedFor    int // -1 for null
+	logs        []LogEntry
+	// volatile state on all servers
+	commitIndex int // index of highest log entry known to be committed
+	lastApplied int
+	// volatile state on leaders, reinitialized after election
+	nextIndex  []int // index of next log entry to send for each followers
+	matchIndex []int // index of highest log entry known to be replicated on a server
 
-	// timers
-	lastHeartBeat time.Time		// time of receiving last heart beat(AppendEntry)
+	lastHeartBeat time.Time // time of receiving last heart beat(AppendEntry)
+	state         State     // Leader, Candidate, Follower
+	applyChan chan ApplyMsg
 
-	state State
 }
 
 // return currentTerm and whether this server
@@ -144,13 +157,65 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
 
-	return index, term, isLeader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.state != Leader { // not a leader, just return false
+		return -1, -1, false
+	}
+
+	log := LogEntry{
+		Term:    rf.currentTerm,
+		Command: command,
+	}
+	// 1. leader stores command in its own logs
+	rf.logs = append(rf.logs, log)
+	Debug(dLog, "S%d append log(%d,%d)", rf.me, log.Term, len(rf.logs)-1)
+	index := len(rf.logs) - 1
+	// 2. leader issue AppendEntries RPC in parallel to each of
+	// 	the other servers to replicate the entry
+	var wg sync.WaitGroup
+	wg.Add(len(rf.peers) - 1)
+	go func() {
+		okCh := make(chan int)
+		for i := range rf.peers {
+			if i == rf.me {
+				continue
+			}
+			// send parallelly
+			go func(pi int) {
+				args := AppendEntryArgs{}
+				args.Term = rf.currentTerm // remember this rf is the leader
+				args.LeaderId = rf.me
+				args.PrevLogIndex = index - 1 // can't be -1, because dummy log
+				// args.PrevLogTerm = ...	// TODO:
+				args.Entries = append(args.Entries, log)
+				args.LeaderCommit = rf.commitIndex
+				wg.Done() // rf.mu is considered released now
+				reply := AppendEntryReply{}
+				ok := rf.sendAppendEntry(pi, &args, &reply)
+				if ok && reply.Success {
+					okCh <- 1
+				} else {
+					okCh <- 0
+				}
+			}(i)
+		}
+		commitCount := 0
+		t := len(rf.peers) - 1
+		for i := 0; i < t; i++ {
+			commitCount += <-okCh
+			Debug(dLog, "S%d rec ok", rf.me)
+			if commitCount == len(rf.peers)/2+1 {
+				// commit the entry
+				rf.CommitOne()
+			}
+		}
+	}()
+	wg.Wait()
+
+	return index, rf.currentTerm, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -183,17 +248,23 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+	// Your initialization code here (2A, 2B, 2C).
+
+	numPeers := len(peers)
 	rf := &Raft{}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
 	rf.currentTerm = 0
 	rf.votedFor = -1
-
+	rf.logs = append(rf.logs, LogEntry{})	// dummy log
+	rf.commitIndex = 0		// no entry committed
+	rf.lastApplied = 0
+	rf.nextIndex = make([]int, numPeers)
+	rf.matchIndex = make([]int, numPeers)
 	rf.lastHeartBeat = time.Now()
 	rf.state = Follower
-
-	// Your initialization code here (2A, 2B, 2C).
+	rf.applyChan = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -202,6 +273,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	go rf.electTicker()
 	go rf.heartbeatTicker()
+	go rf.applyTicker()
 
 	return rf
 }
@@ -246,16 +318,23 @@ func (rf *Raft) SetVotedFor(v int) {
 	rf.votedFor = v
 }
 
+func (rf *Raft) CommitIndex() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.commitIndex
+}
+
 func (rf *Raft) LastHeartBeat() time.Time {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.lastHeartBeat
 }
 
-func (rf *Raft) SetLastHeartBeat(t time.Time) {
+func (rf *Raft) ResetLastHeartBeat() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.lastHeartBeat = t
+	Debug(dLeader, "S%d reset elec timeout", rf.Me())
+	rf.lastHeartBeat = time.Now()
 }
 
 func (rf *Raft) State() State {

@@ -22,8 +22,10 @@ func (rf *Raft) heartbeatTicker() {
 					return
 				}
 				args := AppendEntryArgs{}
-				args.LeaderId = rf.Me()
 				args.Term = rf.CurrentTerm()
+				args.LeaderId = rf.Me()
+				args.LeaderCommit = rf.CommitIndex()
+				args.PrevLogIndex = args.LeaderCommit
 				reply := AppendEntryReply{}
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if ok {
@@ -34,11 +36,12 @@ func (rf *Raft) heartbeatTicker() {
 				// if leader(or candidate) discovers higher term, become follower
 				if reply.Term > rf.CurrentTerm() {
 					Debug(dLeader, "S%d found term %d, step down", rf.Me(), reply.Term)
-					rf.SetState(Follower)
+					rf.toFollower(reply.Term)
+					rf.ResetLastHeartBeat()
 				}
 			}(i)
 		}
-		time.Sleep(120 * time.Millisecond)	// heart beat interval
+		time.Sleep(120 * time.Millisecond) // heart beat interval
 	}
 }
 
@@ -61,10 +64,10 @@ func (rf *Raft) electTicker() {
 		}
 
 		// election timeout
-		rf.SetLastHeartBeat(time.Now()) // reset election timeout
+		rf.ResetLastHeartBeat() // reset election timeout
 		// become candidate, init election
 		rf.toCandidate()
-		Debug(dLeader, "S%d become candidate", rf.Me())
+		Debug(dClient, "S%d become candidate", rf.Me())
 		Debug(dLeader, "S%d init election", rf.Me())
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
 		// when election timeout again during election,
@@ -91,9 +94,10 @@ func (rf *Raft) electTicker() {
 					if rf.CurrentTerm() < reply.Term {
 						rf.toFollower(reply.Term)
 						Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-						Debug(dLeader, "S%d become follower", rf.Me())
+						Debug(dClient, "S%d become follower", rf.Me())
+						rf.ResetLastHeartBeat()
 					} else if reply.VoteGranted {
-						Debug(dLeader, "S%d got vote from S%d", rf.Me(), pi)
+						Debug(dVote, "S%d got vote from S%d", rf.Me(), pi)
 						voteCh <- 1
 					}
 				}(i)
@@ -106,8 +110,8 @@ func (rf *Raft) electTicker() {
 					votes++
 					if rf.State() == Candidate && votes >= len(rf.peers)/2+1 {
 						rf.SetState(Leader)
-						Debug(dLeader, "S%d become leader", rf.Me())
-						rf.SetLastHeartBeat(time.Now())	// reset election timeout
+						Debug(dClient, "S%d become leader", rf.Me())
+						rf.ResetLastHeartBeat() // reset election timeout
 					}
 				case <-quit:
 					return
@@ -119,5 +123,26 @@ func (rf *Raft) electTicker() {
 			time.Sleep(randTimeout - diff)
 		}
 		quit <- 1
+	}
+}
+
+func (rf *Raft) applyTicker() {
+	for !rf.killed() {
+		rf.mu.Lock()
+		if rf.lastApplied < rf.commitIndex {
+			rf.lastApplied++
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs[rf.lastApplied].Command,
+				CommandIndex: rf.commitIndex,
+			}
+			rf.mu.Unlock()
+			rf.applyChan <- msg
+			Debug(dLog, "S%d sent %v to applyCh", rf.me, msg)
+		} else {
+			rf.mu.Unlock()
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -12,12 +12,12 @@ type logTopic string
 
 const (
 	dClient  logTopic = "CLNT"
-	// dCommit  logTopic = "CMIT"
+	dCommit  logTopic = "CMIT"
 	// dDrop    logTopic = "DROP"
 	// dError   logTopic = "ERRO"
 	// dInfo    logTopic = "INFO"
 	dLeader  logTopic = "LEAD"
-	// dLog     logTopic = "LOG1"
+	dLog     logTopic = "LOG1"
 	// dLog2    logTopic = "LOG2"
 	// dPersist logTopic = "PERS"
 	// dSnap    logTopic = "SNAP"
@@ -61,4 +61,11 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 		format = prefix + format
 		log.Printf(format, a...)
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
