@@ -35,7 +35,7 @@ func (rf *Raft) heartbeatTicker() {
 				}
 				// if leader(or candidate) discovers higher term, become follower
 				if reply.Term > rf.CurrentTerm() {
-					Debug(dLeader, "S%d found term %d, step down", rf.Me(), reply.Term)
+					Debug(dLeader, "S%d become follower(term %d)", rf.Me(), reply.Term)
 					rf.toFollower(reply.Term)
 					rf.ResetLastHeartBeat()
 				}
@@ -109,7 +109,7 @@ func (rf *Raft) electTicker() {
 				case <-voteCh:
 					votes++
 					if rf.State() == Candidate && votes >= len(rf.peers)/2+1 {
-						rf.SetState(Leader)
+						rf.toLeader()
 						Debug(dClient, "S%d become leader", rf.Me())
 						rf.ResetLastHeartBeat() // reset election timeout
 					}
@@ -126,6 +126,8 @@ func (rf *Raft) electTicker() {
 	}
 }
 
+// All: if commitIndex > lastApplied, increment lastApplied, apply
+// log[lastApplied] to state machine
 func (rf *Raft) applyTicker() {
 	for !rf.killed() {
 		rf.mu.Lock()
@@ -138,11 +140,126 @@ func (rf *Raft) applyTicker() {
 			}
 			rf.mu.Unlock()
 			rf.applyChan <- msg
-			Debug(dLog, "S%d sent %v to applyCh", rf.me, msg)
+			Debug(dLog, "S%d apply %v", rf.me, msg)
 		} else {
 			rf.mu.Unlock()
 		}
 
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Leader: if last log index > nextIndex for a follower: send
+// AppendEntry RPC with log entries starting at nextIndex
+// TODO: now support only 1 entry at a time, should support multiple
+func (rf *Raft) appendEntryTicker() {
+	numPeers := len(rf.peers)
+	doneCh := []chan int{} // make sure for each follower there is at most 1 ongoing AppendEntry RPC
+	for i := 0; i < numPeers; i++ {
+		doneCh = append(doneCh, make(chan int, 1))
+		doneCh[i] <- 0
+	}
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
+		rf.mu.Lock()
+		if rf.state != Leader {
+			rf.mu.Unlock()
+			continue
+		}
+		lastLogIndex := len(rf.logs) - 1
+		for i, fni := range rf.nextIndex {
+			select {
+			case <-doneCh[i]:
+			default:
+				continue
+			}
+			if i == rf.me || lastLogIndex < fni { // fni - follower's next index
+				doneCh[i] <- 0
+				continue
+			}
+			// else lastLogIndex >= fni
+			args := AppendEntryArgs{}
+			args.Term = rf.currentTerm
+			args.LeaderId = rf.me
+			args.PrevLogIndex = fni - 1
+			args.PrevLogTerm = rf.logs[fni-1].Term
+			args.Entries = append(args.Entries, rf.logs[fni])
+			args.LeaderCommit = rf.commitIndex
+			reply := AppendEntryReply{}
+			// send in parallel
+			go func(pi int) {
+				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+				ok := rf.sendAppendEntry(pi, &args, &reply)
+				doneCh[pi] <- 0
+				if !ok {
+					Debug(dLog, "S%d FAIL ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					return
+				} else {
+					Debug(dLog, "S%d OK ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+				}
+
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				if rf.state != Leader {
+					return
+				}
+				if reply.Success { // Leader: if successful, update nextIndex and matchIndex for follower
+					rf.nextIndex[pi] = args.PrevLogIndex + len(args.Entries) + 1
+					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+1)
+				} else { // Leader: if fails because of log inconsistency, decrement nextIndex and retry
+					rf.nextIndex[pi]-- // would retry in next loop of appendEntryTicker
+				}
+			}(i)
+		}
+		rf.mu.Unlock()
+	}
+}
+
+// Leader: if there exists an N such that N > commitIndex, and a majority of matchIndex[i] >= N.
+// and log[N].term == currentTerm, set commitIndex = N
+func (rf *Raft) commitTicker() {
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
+		rf.mu.Lock()
+		if rf.state != Leader {
+			rf.mu.Unlock()
+			continue
+		}
+
+		// from the Paper 5.4.2:
+		// To eliminate problems like the one in Figure 8, Raft
+		// never commits log entries from previous terms by counting replicas. Only log entries from the leader’s current
+		// term are committed by counting replicas; once an entry
+		// from the current term has been committed in this way,
+		// then all prior entries are committed indirectly because
+		// of the Log Matching Property.
+
+		// find minimum n where log[n].term == currentTerm && n > rf.commitIndex
+		n := rf.commitIndex + 1
+		for n < len(rf.logs) {
+			if rf.logs[n].Term == rf.currentTerm {
+				break
+			}
+			n++
+		}
+		if n == len(rf.logs) {
+			rf.mu.Unlock()
+			continue
+		}
+		cnt := 1 // the leader itself
+		for i, mi := range rf.matchIndex {
+			if i == rf.me {
+				continue
+			}
+			if mi >= n {
+				cnt++
+			}
+		}
+		if cnt >= len(rf.peers)/2+1 {
+			rf.commitIndex = n
+			Debug(dLog, "S%d commit (%d,%d)", rf.me, rf.logs[rf.commitIndex].Term, rf.commitIndex)
+		}
+
+		rf.mu.Unlock()
 	}
 }

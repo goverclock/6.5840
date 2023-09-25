@@ -81,37 +81,45 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
 		rf.ResetLastHeartBeat()
 	}
-	defer Debug(dLog, "S%d reply %v", rf.me, reply)
+	defer func() {
+		if len(args.Entries) != 0 {
+			Debug(dLog, "S%d reply %v", rf.me, reply)
+		} else {
+			Debug(dLeader, "S%d got hb", rf.me)
+		}
+	}()
 
-	// receiver implementation
 	reply.Term = rf.CurrentTerm()
 	reply.Success = true
+	// receiver implementation for replicaing log entries
 	// 1. reply false if term < currentTerm
 	if rf.CurrentTerm() > args.Term {
 		reply.Success = false
 		return
 	}
-	// TODO: 2. reply false if log doesn't contain an entry at preLogIndex whose
-	// 	term matches prevLogTerm
-	logLen := rf.LogLen()
 	prevInd := args.PrevLogIndex
-	// if logLen <= prevInd {
-	// 	reply.Success = false
-	// 	return
-	// } else if prevInd != -1 && rf.LogAt(prevInd).Term != args.PrevLogTerm {
-	// 	reply.Success = false
-	// 	return
-	// }
-
-	if len(args.Entries) != 0 { // heart beat
+	if len(args.Entries) != 0 { // if not heart beat
+		// 2. reply false if log doesn't contain an entry at preLogIndex whose
+		// 	term matches prevLogTerm
+		logLen := rf.LogLen()
+		if logLen <= prevInd {
+			reply.Success = false
+			return
+		}
+		if rf.LogAt(prevInd).Term != args.PrevLogTerm {
+			reply.Success = false
+			return
+		}
 		// 3. if an existing entry conflicts with a new one(same index, different term),
 		//  delete the existing entry and all that follow it
 		entry := args.Entries[0]
 		if logLen > prevInd+1 && rf.LogAt(prevInd+1).Term != entry.Term {
 			rf.LogRemoveFrom(prevInd + 1)
 		}
-		// 4. append any new entries not already in the log
-		rf.LogAppend(entry)
+		// 4. append any new entries *not already* in the log
+		if rf.LogLen() == prevInd+1 {
+			rf.LogAppend(entry)
+		}
 	}
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)

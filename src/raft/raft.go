@@ -84,8 +84,7 @@ type Raft struct {
 
 	lastHeartBeat time.Time // time of receiving last heart beat(AppendEntry)
 	state         State     // Leader, Candidate, Follower
-	applyChan chan ApplyMsg
-
+	applyChan     chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -171,49 +170,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	// 1. leader stores command in its own logs
 	rf.logs = append(rf.logs, log)
-	Debug(dLog, "S%d append log(%d,%d)", rf.me, log.Term, len(rf.logs)-1)
+	rf.matchIndex[rf.me] = len(rf.logs) - 1
+	Debug(dLog, "S%d append&start log(%d,%d)", rf.me, log.Term, len(rf.logs)-1)
+	Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
 	index := len(rf.logs) - 1
 	// 2. leader issue AppendEntries RPC in parallel to each of
 	// 	the other servers to replicate the entry
-	var wg sync.WaitGroup
-	wg.Add(len(rf.peers) - 1)
-	go func() {
-		okCh := make(chan int)
-		for i := range rf.peers {
-			if i == rf.me {
-				continue
-			}
-			// send parallelly
-			go func(pi int) {
-				args := AppendEntryArgs{}
-				args.Term = rf.currentTerm // remember this rf is the leader
-				args.LeaderId = rf.me
-				args.PrevLogIndex = index - 1 // can't be -1, because dummy log
-				// args.PrevLogTerm = ...	// TODO:
-				args.Entries = append(args.Entries, log)
-				args.LeaderCommit = rf.commitIndex
-				wg.Done() // rf.mu is considered released now
-				reply := AppendEntryReply{}
-				ok := rf.sendAppendEntry(pi, &args, &reply)
-				if ok && reply.Success {
-					okCh <- 1
-				} else {
-					okCh <- 0
-				}
-			}(i)
-		}
-		commitCount := 0
-		t := len(rf.peers) - 1
-		for i := 0; i < t; i++ {
-			commitCount += <-okCh
-			Debug(dLog, "S%d rec ok", rf.me)
-			if commitCount == len(rf.peers)/2+1 {
-				// commit the entry
-				rf.CommitOne()
-			}
-		}
-	}()
-	wg.Wait()
+	// (this is done by AppendEntryTicker)
 
 	return index, rf.currentTerm, true
 }
@@ -257,8 +220,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.logs = append(rf.logs, LogEntry{})	// dummy log
-	rf.commitIndex = 0		// no entry committed
+	rf.logs = append(rf.logs, LogEntry{}) // dummy log
+	rf.commitIndex = 0                    // no entry committed
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, numPeers)
 	rf.matchIndex = make([]int, numPeers)
@@ -274,6 +237,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go rf.electTicker()
 	go rf.heartbeatTicker()
 	go rf.applyTicker()
+	go rf.appendEntryTicker()
+	go rf.commitTicker()
 
 	return rf
 }
@@ -286,6 +251,19 @@ func (rf *Raft) CurrentTerm() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm
+}
+
+// convert to leader, reset nextIndex, matchIndex
+func (rf *Raft) toLeader() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.state = Leader
+	numPeers := len(rf.peers)
+	rf.nextIndex = make([]int, numPeers) // initialized to leader last log index + 1
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = len(rf.logs)
+	}
+	rf.matchIndex = make([]int, numPeers) // initialized to 0, increases monotonically
 }
 
 // convert to candidate, increment term, vote for self
@@ -333,7 +311,7 @@ func (rf *Raft) LastHeartBeat() time.Time {
 func (rf *Raft) ResetLastHeartBeat() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	Debug(dLeader, "S%d reset elec timeout", rf.Me())
+	Debug(dTimer, "S%d reset elec timeout", rf.Me())
 	rf.lastHeartBeat = time.Now()
 }
 
@@ -341,10 +319,4 @@ func (rf *Raft) State() State {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.state
-}
-
-func (rf *Raft) SetState(st State) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.state = st
 }

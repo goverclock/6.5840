@@ -25,13 +25,6 @@ func (rf *Raft) LogAppend(log LogEntry) {
 	Debug(dLog, "S%d append log(%d,%d)", rf.me, log.Term, len(rf.logs) - 1)
 }
 
-func (rf *Raft) CommitOne() {
-	Debug(dLog, "S%d commit one", rf.me)
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.commitIndex++
-}
-
 func (rf *Raft) SetCommitIndex(ci int) {
 	Debug(dLog, "S%d set ci to %d", rf.me, ci)
 	rf.mu.Lock()
