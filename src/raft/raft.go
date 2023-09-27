@@ -171,7 +171,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// 1. leader stores command in its own logs
 	rf.logs = append(rf.logs, log)
 	rf.matchIndex[rf.me] = len(rf.logs) - 1
-	Debug(dLog, "S%d append&start log(%d,%d)", rf.me, log.Term, len(rf.logs)-1)
+	Debug(dLog, "S%d append&start (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
 	Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
 	index := len(rf.logs) - 1
 	// 2. leader issue AppendEntries RPC in parallel to each of

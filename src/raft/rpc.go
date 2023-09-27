@@ -8,10 +8,10 @@ var rpcLock sync.Mutex // should be acquired whenever invoke a RPC handler
 
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term        int // candidate's term
-	CandidateId int // candidate requesting vote
-	// lastLogIndex	int
-	// lastLogTerm		int
+	Term         int // candidate's term
+	CandidateId  int // candidate requesting vote
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 type RequestVoteReply struct {
@@ -42,21 +42,36 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 
 	// reveiver implementation:
 	// 1. reply false if term < currentTerm
-	// 2. if votedFor is null of candidateId, and candidate's log is at least as up-to-date
-	// 	as receiver's log, grant vote
 	reply.Term = rf.CurrentTerm()
 	reply.VoteGranted = false
 	if args.Term < rf.CurrentTerm() {
 		return
 	}
 	if rf.CurrentTerm() < args.Term { // step down to follower
+		rf.ResetLastHeartBeat()
 		rf.toFollower(args.Term)
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
 		Debug(dClient, "S%d become follower(vote)", rf.Me())
-		rf.ResetLastHeartBeat()
 	}
+
+	// 2. if votedFor is null or candidateId, and candidate's log is at least as up-to-date
+	// 	as receiver's log, grant vote
 	if rf.VotedFor() == -1 || rf.VotedFor() == args.CandidateId {
-		// TODO: check if log is up to date
+		// check if the candidate's log is up to date
+		// determine which of two logs is more up-to-date by comparing the index and
+		// term of the last entries in the logs
+		// if terms differ, higher term = more up-to-date
+		// else longer log = more up-to-date
+		logLen := rf.LogLen()
+		lastLog := rf.LogAt(logLen - 1)
+		if args.LastLogTerm < lastLog.Term {
+			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.Me(), args.CandidateId, args.LastLogTerm, lastLog.Term)
+			return
+		} else if args.LastLogTerm == lastLog.Term && args.LastLogIndex < logLen-1 {
+			Debug(dVote, "S%d deny S%d(log len)", rf.Me(), args.CandidateId)
+			return
+		}
+
 		rf.SetVotedFor(args.CandidateId)
 		reply.VoteGranted = true
 		Debug(dVote, "S%d voted S%d", rf.Me(), args.CandidateId)
@@ -76,16 +91,16 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 
 	// if find higher term, step down
 	if rf.CurrentTerm() < args.Term {
+		rf.ResetLastHeartBeat()
 		rf.toFollower(args.Term)
 		Debug(dClient, "S%d become follower(append)", rf.Me())
 		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		rf.ResetLastHeartBeat()
 	}
 	defer func() {
 		if len(args.Entries) != 0 {
 			Debug(dLog, "S%d reply %v", rf.me, reply)
 		} else {
-			Debug(dLeader, "S%d got hb", rf.me)
+			Debug(dTimer, "S%d got hb", rf.me)
 		}
 	}()
 
@@ -124,7 +139,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.CommitIndex() {
-		rf.SetCommitIndex(min(args.LeaderCommit, prevInd+1))
+		rf.SetCommitIndex(min(args.LeaderCommit, rf.LogLen()-1))
 	}
 }
 

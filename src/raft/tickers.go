@@ -29,15 +29,15 @@ func (rf *Raft) heartbeatTicker() {
 				reply := AppendEntryReply{}
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if ok {
-					Debug(dLeader, "S%d hb to S%d(OK)", rf.Me(), pi)
+					Debug(dTimer, "S%d hb to S%d(GOOD)", rf.Me(), pi)
 				} else {
-					Debug(dLeader, "S%d hb to S%d(FAIL)", rf.Me(), pi)
+					Debug(dTimer, "S%d hb to S%d(BAD)", rf.Me(), pi)
 				}
 				// if leader(or candidate) discovers higher term, become follower
 				if reply.Term > rf.CurrentTerm() {
 					Debug(dLeader, "S%d become follower(term %d)", rf.Me(), reply.Term)
-					rf.toFollower(reply.Term)
 					rf.ResetLastHeartBeat()
+					rf.toFollower(reply.Term)
 				}
 			}(i)
 		}
@@ -84,6 +84,9 @@ func (rf *Raft) electTicker() {
 					args := RequestVoteArgs{}
 					args.CandidateId = rf.Me()
 					args.Term = rf.CurrentTerm()
+					args.LastLogIndex = rf.LogLen() - 1
+					lastLog := rf.LogAt(args.LastLogIndex)
+					args.LastLogTerm = lastLog.Term
 					reply := RequestVoteReply{}
 					ok := rf.sendRequestVote(pi, &args, &reply)
 					if !ok {
@@ -92,10 +95,10 @@ func (rf *Raft) electTicker() {
 					// if a candidate or leader discovers that its term is out of date,
 					// it immediately reverts to follower state
 					if rf.CurrentTerm() < reply.Term {
+						rf.ResetLastHeartBeat()
 						rf.toFollower(reply.Term)
 						Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
 						Debug(dClient, "S%d become follower", rf.Me())
-						rf.ResetLastHeartBeat()
 					} else if reply.VoteGranted {
 						Debug(dVote, "S%d got vote from S%d", rf.Me(), pi)
 						voteCh <- 1
@@ -136,11 +139,13 @@ func (rf *Raft) applyTicker() {
 			msg := ApplyMsg{
 				CommandValid: true,
 				Command:      rf.logs[rf.lastApplied].Command,
-				CommandIndex: rf.commitIndex,
+				CommandIndex: rf.lastApplied,
 			}
+			t := rf.currentTerm
+			ind := rf.lastApplied
 			rf.mu.Unlock()
 			rf.applyChan <- msg
-			Debug(dLog, "S%d apply %v", rf.me, msg)
+			Debug(dLog, "S%d apply (%d,%d)=%v", rf.me, t, ind, msg.Command)
 		} else {
 			rf.mu.Unlock()
 		}
@@ -192,10 +197,10 @@ func (rf *Raft) appendEntryTicker() {
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				doneCh[pi] <- 0
 				if !ok {
-					Debug(dLog, "S%d FAIL ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d BAD ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
 					return
 				} else {
-					Debug(dLog, "S%d OK ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d GOOD ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
 				}
 
 				rf.mu.Lock()
@@ -257,7 +262,7 @@ func (rf *Raft) commitTicker() {
 		}
 		if cnt >= len(rf.peers)/2+1 {
 			rf.commitIndex = n
-			Debug(dLog, "S%d commit (%d,%d)", rf.me, rf.logs[rf.commitIndex].Term, rf.commitIndex)
+			Debug(dLog, "S%d commit (%d,%d)=%v", rf.me, rf.logs[rf.commitIndex].Term, rf.commitIndex, rf.logs[rf.commitIndex].Command)
 		}
 
 		rf.mu.Unlock()
