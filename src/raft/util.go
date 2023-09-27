@@ -24,7 +24,7 @@ const (
 	dTerm    logTopic = "TERM"
 	// dTest    logTopic = "TEST"
 	dTimer   logTopic = "TIMR"
-	// dTrace   logTopic = "TRCE"
+	dTrace   logTopic = "TRCE"
 	dVote    logTopic = "VOTE"
 	// dWarn    logTopic = "WARN"
 )

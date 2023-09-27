@@ -16,17 +16,17 @@ package raft
 //   should send an ApplyMsg to the service (or tester)
 //   in the same server.
 //
-
 import (
-	//	"bytes"
-
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
 	"6.5840/labrpc"
 )
+
+//	"bytes"
+
+//	"6.5840/labgob"
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -212,7 +212,6 @@ func (rf *Raft) killed() bool {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	// Your initialization code here (2A, 2B, 2C).
-
 	numPeers := len(peers)
 	rf := &Raft{}
 	rf.peers = peers
@@ -243,20 +242,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	return rf
 }
 
-func (rf *Raft) Me() int {
-	return rf.me
-}
-
-func (rf *Raft) CurrentTerm() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.currentTerm
-}
-
 // convert to leader, reset nextIndex, matchIndex
 func (rf *Raft) toLeader() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.state = Leader
 	numPeers := len(rf.peers)
 	rf.nextIndex = make([]int, numPeers) // initialized to leader last log index + 1
@@ -268,8 +255,6 @@ func (rf *Raft) toLeader() {
 
 // convert to candidate, increment term, vote for self
 func (rf *Raft) toCandidate() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.state = Candidate
@@ -277,46 +262,12 @@ func (rf *Raft) toCandidate() {
 
 // convert to follower, set term to t, reset voteFor
 func (rf *Raft) toFollower(t int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	rf.currentTerm = t
 	rf.votedFor = -1
 	rf.state = Follower
 }
 
-func (rf *Raft) VotedFor() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.votedFor
-}
-
-func (rf *Raft) SetVotedFor(v int) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.votedFor = v
-}
-
-func (rf *Raft) CommitIndex() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.commitIndex
-}
-
-func (rf *Raft) LastHeartBeat() time.Time {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.lastHeartBeat
-}
-
 func (rf *Raft) ResetLastHeartBeat() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	Debug(dTimer, "S%d reset elec timeout", rf.Me())
+	Debug(dTimer, "S%d reset elec timeout", rf.me)
 	rf.lastHeartBeat = time.Now()
-}
-
-func (rf *Raft) State() State {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.state
 }

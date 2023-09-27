@@ -31,8 +31,7 @@ type AppendEntryArgs struct {
 
 type AppendEntryReply struct {
 	Term    int  // currentTerm, for leader to update itself
-	Success bool // true if follower contained entry matching
-	// prevLogIndex and prevLogTerm
+	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
 }
 
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -40,23 +39,26 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 	rpcLock.Lock()
 	defer rpcLock.Unlock()
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// reveiver implementation:
 	// 1. reply false if term < currentTerm
-	reply.Term = rf.CurrentTerm()
+	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
-	if args.Term < rf.CurrentTerm() {
+	if args.Term < rf.currentTerm {
 		return
 	}
-	if rf.CurrentTerm() < args.Term { // step down to follower
-		rf.ResetLastHeartBeat()
+
+	if rf.currentTerm < args.Term { // step down to follower
+		// rf.ResetLastHeartBeat()	// should only reset after granting vote to the candidate
 		rf.toFollower(args.Term)
-		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-		Debug(dClient, "S%d become follower(vote)", rf.Me())
+		Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+		Debug(dClient, "S%d become follower(vote)", rf.me)
 	}
 
 	// 2. if votedFor is null or candidateId, and candidate's log is at least as up-to-date
 	// 	as receiver's log, grant vote
-	if rf.VotedFor() == -1 || rf.VotedFor() == args.CandidateId {
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		// check if the candidate's log is up to date
 		// determine which of two logs is more up-to-date by comparing the index and
 		// term of the last entries in the logs
@@ -65,16 +67,16 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 		logLen := rf.LogLen()
 		lastLog := rf.LogAt(logLen - 1)
 		if args.LastLogTerm < lastLog.Term {
-			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.Me(), args.CandidateId, args.LastLogTerm, lastLog.Term)
+			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.me, args.CandidateId, args.LastLogTerm, lastLog.Term)
 			return
 		} else if args.LastLogTerm == lastLog.Term && args.LastLogIndex < logLen-1 {
-			Debug(dVote, "S%d deny S%d(log len)", rf.Me(), args.CandidateId)
+			Debug(dVote, "S%d deny S%d(log len)", rf.me, args.CandidateId)
 			return
 		}
 
-		rf.SetVotedFor(args.CandidateId)
+		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
-		Debug(dVote, "S%d voted S%d", rf.Me(), args.CandidateId)
+		Debug(dVote, "S%d voted S%d", rf.me, args.CandidateId)
 		rf.ResetLastHeartBeat()
 	}
 }
@@ -83,19 +85,6 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	rpcLock.Lock()
 	defer rpcLock.Unlock()
 
-	if len(args.Entries) > 1 {
-		panic("should only append at most 1 entry at one time")
-	}
-	// reset election timeout
-	rf.ResetLastHeartBeat()
-
-	// if find higher term, step down
-	if rf.CurrentTerm() < args.Term {
-		rf.ResetLastHeartBeat()
-		rf.toFollower(args.Term)
-		Debug(dClient, "S%d become follower(append)", rf.Me())
-		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-	}
 	defer func() {
 		if len(args.Entries) != 0 {
 			Debug(dLog, "S%d reply %v", rf.me, reply)
@@ -104,11 +93,27 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		}
 	}()
 
-	reply.Term = rf.CurrentTerm()
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(args.Entries) > 1 {
+		panic("should only append at most 1 entry at one time")
+	}
+	// reset election timeout
+	rf.ResetLastHeartBeat()
+
+	// if find higher term, step down
+	if rf.currentTerm < args.Term {
+		rf.ResetLastHeartBeat()
+		rf.toFollower(args.Term)
+		Debug(dClient, "S%d become follower(append)", rf.me)
+		Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+	}
+
+	reply.Term = rf.currentTerm
 	reply.Success = true
 	// receiver implementation for replicaing log entries
 	// 1. reply false if term < currentTerm
-	if rf.CurrentTerm() > args.Term {
+	if rf.currentTerm > args.Term {
 		reply.Success = false
 		return
 	}
@@ -138,7 +143,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	}
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)
-	if args.LeaderCommit > rf.CommitIndex() {
+	if args.LeaderCommit > rf.commitIndex {
 		rf.SetCommitIndex(min(args.LeaderCommit, rf.LogLen()-1))
 	}
 }

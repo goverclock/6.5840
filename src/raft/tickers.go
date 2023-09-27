@@ -8,37 +8,46 @@ import (
 // send heartbeat(empty AppendEntries) when the server is leader
 func (rf *Raft) heartbeatTicker() {
 	for !rf.killed() {
-		if rf.State() != Leader {
+		rf.mu.Lock()
+		if rf.state != Leader {
+			rf.mu.Unlock()
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
+		rf.mu.Unlock()
 
 		for i := range rf.peers {
 			if i == rf.me {
 				continue
 			}
 			go func(pi int) {
-				if rf.State() != Leader {
+				rf.mu.Lock()
+				if rf.state != Leader {
+					rf.mu.Unlock()
 					return
 				}
 				args := AppendEntryArgs{}
-				args.Term = rf.CurrentTerm()
-				args.LeaderId = rf.Me()
-				args.LeaderCommit = rf.CommitIndex()
+				args.Term = rf.currentTerm
+				args.LeaderId = rf.me
+				args.LeaderCommit = rf.commitIndex
 				args.PrevLogIndex = args.LeaderCommit
+				rf.mu.Unlock()
+
 				reply := AppendEntryReply{}
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if ok {
-					Debug(dTimer, "S%d hb to S%d(GOOD)", rf.Me(), pi)
+					Debug(dTimer, "S%d hb to S%d(GOOD)", rf.me, pi)
 				} else {
-					Debug(dTimer, "S%d hb to S%d(BAD)", rf.Me(), pi)
+					Debug(dTimer, "S%d hb to S%d(BAD)", rf.me, pi)
 				}
 				// if leader(or candidate) discovers higher term, become follower
-				if reply.Term > rf.CurrentTerm() {
-					Debug(dLeader, "S%d become follower(term %d)", rf.Me(), reply.Term)
+				rf.mu.Lock()
+				if reply.Term > rf.currentTerm {
+					Debug(dLeader, "S%d become follower(term %d)", rf.me, reply.Term)
 					rf.ResetLastHeartBeat()
 					rf.toFollower(reply.Term)
 				}
+				rf.mu.Unlock()
 			}(i)
 		}
 		time.Sleep(120 * time.Millisecond) // heart beat interval
@@ -52,14 +61,17 @@ func (rf *Raft) electTicker() {
 		// Check if a leader election should be started.
 
 		// 600 ~ 900ms election timeout
-		diff := time.Since(rf.LastHeartBeat())
+		rf.mu.Lock()
+		diff := time.Since(rf.lastHeartBeat)
 		if diff < randTimeout {
+			rf.mu.Unlock()
 			time.Sleep(randTimeout - diff)
 			continue
 		}
 		randTimeout = time.Duration(600+(rand.Int()%300)) * time.Millisecond
 
-		if rf.State() == Leader {
+		if rf.state == Leader {
+			rf.mu.Unlock()
 			continue
 		}
 
@@ -67,9 +79,11 @@ func (rf *Raft) electTicker() {
 		rf.ResetLastHeartBeat() // reset election timeout
 		// become candidate, init election
 		rf.toCandidate()
-		Debug(dClient, "S%d become candidate", rf.Me())
-		Debug(dLeader, "S%d init election", rf.Me())
-		Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
+		Debug(dClient, "S%d become candidate", rf.me)
+		Debug(dLeader, "S%d init election", rf.me)
+		Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+		rf.mu.Unlock()
+
 		// when election timeout again during election,
 		// quit current and start new election
 		quit := make(chan int)
@@ -77,16 +91,19 @@ func (rf *Raft) electTicker() {
 			// send RequestVoteRPCs to all other servers
 			voteCh := make(chan int)
 			for i := range rf.peers {
-				if i == rf.Me() {
+				if i == rf.me {
 					continue
 				}
 				go func(pi int) {
+					rf.mu.Lock()
 					args := RequestVoteArgs{}
-					args.CandidateId = rf.Me()
-					args.Term = rf.CurrentTerm()
+					args.CandidateId = rf.me
+					args.Term = rf.currentTerm
 					args.LastLogIndex = rf.LogLen() - 1
 					lastLog := rf.LogAt(args.LastLogIndex)
 					args.LastLogTerm = lastLog.Term
+					rf.mu.Unlock()
+
 					reply := RequestVoteReply{}
 					ok := rf.sendRequestVote(pi, &args, &reply)
 					if !ok {
@@ -94,14 +111,19 @@ func (rf *Raft) electTicker() {
 					}
 					// if a candidate or leader discovers that its term is out of date,
 					// it immediately reverts to follower state
-					if rf.CurrentTerm() < reply.Term {
+					rf.mu.Lock()
+					if rf.currentTerm < reply.Term {
 						rf.ResetLastHeartBeat()
 						rf.toFollower(reply.Term)
-						Debug(dTerm, "S%d term=%d", rf.Me(), rf.CurrentTerm())
-						Debug(dClient, "S%d become follower", rf.Me())
+						Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+						Debug(dClient, "S%d become follower", rf.me)
+						rf.mu.Unlock()
 					} else if reply.VoteGranted {
-						Debug(dVote, "S%d got vote from S%d", rf.Me(), pi)
+						rf.mu.Unlock()
+						Debug(dVote, "S%d got vote from S%d", rf.me, pi)
 						voteCh <- 1
+					} else {
+						rf.mu.Unlock()
 					}
 				}(i)
 			}
@@ -111,17 +133,21 @@ func (rf *Raft) electTicker() {
 				select {
 				case <-voteCh:
 					votes++
-					if rf.State() == Candidate && votes >= len(rf.peers)/2+1 {
+					rf.mu.Lock()
+					if rf.state == Candidate && votes >= len(rf.peers)/2+1 {
 						rf.toLeader()
-						Debug(dClient, "S%d become leader", rf.Me())
+						Debug(dClient, "S%d become leader", rf.me)
 						rf.ResetLastHeartBeat() // reset election timeout
 					}
+					rf.mu.Unlock()
 				case <-quit:
 					return
 				}
 			}
 		}()
-		diff = time.Since(rf.LastHeartBeat())
+		rf.mu.Lock()
+		diff = time.Since(rf.lastHeartBeat)
+		rf.mu.Unlock()
 		if diff < randTimeout {
 			time.Sleep(randTimeout - diff)
 		}
@@ -206,6 +232,13 @@ func (rf *Raft) appendEntryTicker() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 				if rf.state != Leader {
+					return
+				}
+				if reply.Term > rf.currentTerm {
+					rf.ResetLastHeartBeat()
+					rf.toFollower(args.Term)
+					Debug(dClient, "S%d become follower(ae reply)", rf.me)
+					Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
 					return
 				}
 				if reply.Success { // Leader: if successful, update nextIndex and matchIndex for follower
