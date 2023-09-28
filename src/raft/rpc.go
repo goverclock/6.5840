@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-var rpcLock sync.Mutex // should be acquired whenever invoke a RPC handler
+var handlerLock sync.Mutex // should be acquired whenever invoke a RPC handler
 
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
@@ -36,8 +36,8 @@ type AppendEntryReply struct {
 
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	rpcLock.Lock()
-	defer rpcLock.Unlock()
+	handlerLock.Lock()
+	defer handlerLock.Unlock()
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -82,8 +82,8 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 }
 
 func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryReply) {
-	rpcLock.Lock()
-	defer rpcLock.Unlock()
+	handlerLock.Lock()
+	defer handlerLock.Unlock()
 
 	defer func() {
 		if len(args.Entries) != 0 {

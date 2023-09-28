@@ -109,6 +109,7 @@ func (rf *Raft) electTicker() {
 					reply := RequestVoteReply{}
 					ok := rf.sendRequestVote(pi, &args, &reply)
 					if !ok {
+						voteCh <- 0
 						return
 					}
 					// if a candidate or leader discovers that its term is out of date,
@@ -120,21 +121,26 @@ func (rf *Raft) electTicker() {
 						Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
 						Debug(dClient, "S%d become follower", rf.me)
 						rf.mu.Unlock()
+						voteCh <- 0
 					} else if reply.VoteGranted {
 						rf.mu.Unlock()
 						Debug(dVote, "S%d got vote from S%d", rf.me, pi)
 						voteCh <- 1
 					} else {
 						rf.mu.Unlock()
+						voteCh <- 0
 					}
 				}(i)
 			}
 
 			votes := 1
+			replyCount := 0
+			numPeers := len(rf.peers)
 			for {
 				select {
-				case <-voteCh:
-					votes++
+				case v := <-voteCh:
+					votes += v
+					replyCount++
 					rf.mu.Lock()
 					if rf.state == Candidate && votes >= len(rf.peers)/2+1 {
 						rf.toLeader()
@@ -143,6 +149,9 @@ func (rf *Raft) electTicker() {
 					}
 					rf.mu.Unlock()
 				case <-quit:
+					for replyCount < numPeers-1 {
+						<-voteCh
+					}
 					return
 				}
 			}
