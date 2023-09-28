@@ -26,11 +26,13 @@ func (rf *Raft) heartbeatTicker() {
 					rf.mu.Unlock()
 					return
 				}
+				fni := rf.nextIndex[pi] // fni - follower's next index
 				args := AppendEntryArgs{}
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
+				args.PrevLogIndex = fni - 1
+				args.PrevLogTerm = rf.logs[fni-1].Term
 				args.LeaderCommit = rf.commitIndex
-				args.PrevLogIndex = args.LeaderCommit
 				rf.mu.Unlock()
 
 				reply := AppendEntryReply{}
@@ -167,7 +169,7 @@ func (rf *Raft) applyTicker() {
 				Command:      rf.logs[rf.lastApplied].Command,
 				CommandIndex: rf.lastApplied,
 			}
-			t := rf.currentTerm
+			t := rf.logs[rf.lastApplied].Term
 			ind := rf.lastApplied
 			rf.mu.Unlock()
 			rf.applyChan <- msg
@@ -223,10 +225,10 @@ func (rf *Raft) appendEntryTicker() {
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				doneCh[pi] <- 0
 				if !ok {
-					Debug(dLog, "S%d BAD ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Term, args.PrevLogIndex+1, pi)
 					return
 				} else {
-					Debug(dLog, "S%d GOOD ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d ae(%d,%d) to S%d(GOOD)", rf.me, args.Term, args.PrevLogIndex+1, pi)
 				}
 
 				rf.mu.Lock()

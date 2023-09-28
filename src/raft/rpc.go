@@ -101,9 +101,9 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	// reset election timeout
 	rf.ResetLastHeartBeat()
 
-	// if find higher term, step down
-	if rf.currentTerm < args.Term {
-		rf.ResetLastHeartBeat()
+	// if find higher term, or another server claiming to be leader
+	// with at least as large as the candidate's current term, step down
+	if rf.currentTerm < args.Term || (rf.currentTerm == args.Term && rf.state == Candidate) {
 		rf.toFollower(args.Term)
 		Debug(dClient, "S%d become follower(append)", rf.me)
 		Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
@@ -118,18 +118,18 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		return
 	}
 	prevInd := args.PrevLogIndex
-	if len(args.Entries) != 0 { // if not heart beat
-		// 2. reply false if log doesn't contain an entry at preLogIndex whose
-		// 	term matches prevLogTerm
-		logLen := rf.LogLen()
-		if logLen <= prevInd {
-			reply.Success = false
-			return
-		}
-		if rf.LogAt(prevInd).Term != args.PrevLogTerm {
-			reply.Success = false
-			return
-		}
+	// 2. reply false if log doesn't contain an entry at preLogIndex whose
+	// 	term matches prevLogTerm
+	logLen := rf.LogLen()
+	if logLen <= prevInd {
+		reply.Success = false
+		return
+	}
+	if rf.LogAt(prevInd).Term != args.PrevLogTerm {
+		reply.Success = false
+		return
+	}
+	if len(args.Entries) != 0 {	// if not heart beat
 		// 3. if an existing entry conflicts with a new one(same index, different term),
 		//  delete the existing entry and all that follow it
 		entry := args.Entries[0]
@@ -144,7 +144,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.SetCommitIndex(min(args.LeaderCommit, rf.LogLen()-1))
+		rf.SetCommitIndex(min(args.LeaderCommit, prevInd + len(args.Entries)))
 	}
 }
 
