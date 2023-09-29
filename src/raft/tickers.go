@@ -226,14 +226,19 @@ func (rf *Raft) appendEntryTicker() {
 			reply := AppendEntryReply{}
 			// send in parallel
 			go func(pi int) {
-				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Term, args.PrevLogIndex+1, pi)
+				defer func() {
+					doneCh[pi] <- 0
+				}()
+				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+				rf.mu.Lock()
+				Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
+				rf.mu.Unlock()
 				ok := rf.sendAppendEntry(pi, &args, &reply)
-				doneCh[pi] <- 0
 				if !ok {
-					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
 					return
 				} else {
-					Debug(dLog, "S%d ae(%d,%d) to S%d(GOOD)", rf.me, args.Term, args.PrevLogIndex+1, pi)
+					Debug(dLog, "S%d ae(%d,%d) to S%d(GOOD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
 				}
 
 				rf.mu.Lock()
