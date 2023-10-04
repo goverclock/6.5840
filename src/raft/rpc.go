@@ -32,6 +32,10 @@ type AppendEntryArgs struct {
 type AppendEntryReply struct {
 	Term    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
+	// for optimization to reduce number of rejected AppendEntry calls
+	XTerm	int	// term of the conflicting (follower's)entry(if any, else -1)
+	XIndex	int	// index of first entry with XTerm(if any, else -1)
+	XLen	int	// follower's log len
 }
 
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -122,15 +126,20 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	// 2. reply false if log doesn't contain an entry at preLogIndex whose
 	// 	term matches prevLogTerm
 	logLen := rf.LogLen()
-	if logLen <= prevInd {
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.XLen = logLen
+	if logLen <= prevInd { // follower's log is too short
 		reply.Success = false
 		return
 	}
-	if rf.LogAt(prevInd).Term != args.PrevLogTerm {
+	if rf.LogAt(prevInd).Term != args.PrevLogTerm {	// conflicting entry
 		reply.Success = false
+		reply.XTerm = rf.LogAt(prevInd).Term
+		reply.XIndex = rf.FirstWithTerm(reply.XTerm, prevInd)
 		return
 	}
-	if len(args.Entries) != 0 {	// if not heart beat
+	if len(args.Entries) != 0 { // if not heart beat
 		// 3. if an existing entry conflicts with a new one(same index, different term),
 		//  delete the existing entry and all that follow it
 		entry := args.Entries[0]
@@ -145,7 +154,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		rf.SetCommitIndex(min(args.LeaderCommit, prevInd + len(args.Entries)))
+		rf.SetCommitIndex(min(args.LeaderCommit, prevInd+len(args.Entries)))
 	}
 }
 

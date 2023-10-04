@@ -230,9 +230,6 @@ func (rf *Raft) appendEntryTicker() {
 					doneCh[pi] <- 0
 				}()
 				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-				rf.mu.Lock()
-				Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
-				rf.mu.Unlock()
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if !ok {
 					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
@@ -257,8 +254,18 @@ func (rf *Raft) appendEntryTicker() {
 					rf.nextIndex[pi] = args.PrevLogIndex + len(args.Entries) + 1
 					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+1)
 				} else { // Leader: if fails because of log inconsistency, decrement nextIndex and retry
-					rf.nextIndex[pi]-- // would retry in next loop of appendEntryTicker
+					if reply.XTerm == -1 {	// follower's log is too short
+						rf.nextIndex[pi] = reply.XLen
+					} else {
+						ok, ind := rf.HasTerm(reply.XTerm)
+						if !ok {	// leader doesn't have XTerm
+							rf.nextIndex[pi] = reply.XIndex
+						} else {	// leader has XTerm
+							rf.nextIndex[pi] = ind
+						}
+					}
 				}
+				Debug(dLog, "S%d update ni=%v", rf.me, rf.nextIndex)
 			}(i)
 		}
 		rf.mu.Unlock()
