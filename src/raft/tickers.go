@@ -179,23 +179,26 @@ func (rf *Raft) applyTicker() {
 			rf.mu.Unlock()
 			rf.applyChan <- msg
 			Debug(dLog, "S%d apply (%d,%d)=%v", rf.me, t, ind, msg.Command)
+			// not sleeping here to accelerate
 		} else {
 			rf.mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
 		}
-
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 // Leader: if last log index > nextIndex for a follower: send
 // AppendEntry RPC with log entries starting at nextIndex
-// TODO: now support only 1 entry at a time, should support multiple
 func (rf *Raft) appendEntryTicker() {
 	numPeers := len(rf.peers)
 	doneCh := []chan int{} // make sure for each follower there is at most 1 ongoing AppendEntry RPC
+	cancelCh := []chan int{}
+	lastTermSent := []int{}
 	for i := 0; i < numPeers; i++ {
 		doneCh = append(doneCh, make(chan int, 1))
 		doneCh[i] <- 0
+		cancelCh = append(cancelCh, make(chan int))
+		lastTermSent = append(lastTermSent, -1)
 	}
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
@@ -206,6 +209,14 @@ func (rf *Raft) appendEntryTicker() {
 		}
 		lastLogIndex := len(rf.logs) - 1
 		for i, fni := range rf.nextIndex {
+			if lastTermSent[i] != -1 && lastTermSent[i] != rf.currentTerm {
+				// cancel AppendEntry call sent in stale term
+				select {
+				case cancelCh[i] <- 0:
+				default:
+				}
+			}
+
 			select {
 			case <-doneCh[i]:
 			default:
@@ -225,12 +236,28 @@ func (rf *Raft) appendEntryTicker() {
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntryReply{}
 			// send in parallel
+			lastTermSent[i] = args.Term
 			go func(pi int) {
+				retCh := make(chan bool)
+				go func() {
+					Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+					retCh <- rf.sendAppendEntry(pi, &args, &reply)
+				}()
+				ok := false
+				select {
+				case ret := <-retCh:
+					ok = ret
+				case <-cancelCh[pi]:
+					Debug(dLog, "S%d cancel ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+					doneCh[pi] <- 0
+					<-retCh
+					return
+				}
+
+				// sendAppendEntry() has returned
 				defer func() {
 					doneCh[pi] <- 0
 				}()
-				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if !ok {
 					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
 					return
@@ -240,7 +267,7 @@ func (rf *Raft) appendEntryTicker() {
 
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				if rf.state != Leader {
+				if rf.currentTerm != args.Term { // stronger than rf.state != Leader
 					return
 				}
 				if reply.Term > rf.currentTerm {
@@ -254,13 +281,13 @@ func (rf *Raft) appendEntryTicker() {
 					rf.nextIndex[pi] = args.PrevLogIndex + len(args.Entries) + 1
 					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+len(args.Entries))
 				} else { // Leader: if fails because of log inconsistency, decrement nextIndex and retry
-					if reply.XTerm == -1 {	// follower's log is too short
+					if reply.XTerm == -1 { // follower's log is too short
 						rf.nextIndex[pi] = reply.XLen
 					} else {
 						ok, ind := rf.HasTerm(reply.XTerm)
-						if !ok {	// leader doesn't have XTerm
+						if !ok { // leader doesn't have XTerm
 							rf.nextIndex[pi] = reply.XIndex
-						} else {	// leader has XTerm
+						} else { // leader has XTerm
 							rf.nextIndex[pi] = ind
 						}
 					}
