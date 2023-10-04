@@ -14,7 +14,7 @@ const (
 	dClient  logTopic = "CLNT"
 	dCommit  logTopic = "CMIT"
 	// dDrop    logTopic = "DROP"
-	// dError   logTopic = "ERRO"
+	dError   logTopic = "ERRO"
 	// dInfo    logTopic = "INFO"
 	dLeader  logTopic = "LEAD"
 	dLog     logTopic = "LOG1"

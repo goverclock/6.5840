@@ -10,11 +10,13 @@ func (rf *Raft) LogAt(i int) LogEntry {
 
 func (rf *Raft) LogRemoveFrom(i int) {
 	rf.logs = rf.logs[:i]
+	rf.persist()
 	Debug(dLog, "S%d remove log from %d", rf.me, i)
 }
 
 func (rf *Raft) LogAppend(log LogEntry) {
 	rf.logs = append(rf.logs, log)
+	rf.persist()
 	Debug(dLog, "S%d append (%d,%d)=%v", rf.me, log.Term, len(rf.logs) - 1, log.Command)
 }
 

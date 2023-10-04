@@ -17,10 +17,12 @@ package raft
 //   in the same server.
 //
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -72,6 +74,7 @@ type Raft struct {
 
 	// Your data here (2A, 2B, 2C).
 	// persistent state on all servers
+	// updated on stable storage before responding to RPCs
 	currentTerm int
 	votedFor    int // -1 for null
 	logs        []LogEntry
@@ -112,6 +115,14 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// raftstate := w.Bytes()
 	// rf.persister.Save(raftstate, nil)
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -132,6 +143,20 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var ct int
+	var vf int
+	var lg []LogEntry
+	if d.Decode(&ct) != nil || d.Decode(&vf) != nil || d.Decode(&lg) != nil {
+		Debug(dError, "S%d readPersist(): fail to decode", rf.me)
+		panic("readPersist() failed")
+	} else {
+		rf.currentTerm = ct
+		rf.votedFor = vf
+		rf.logs = lg
+	}
 }
 
 // the service says it has created a snapshot that has
@@ -169,9 +194,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command: command,
 	}
 	// 1. leader stores command in its own logs
-	rf.logs = append(rf.logs, log)
+	rf.LogAppend(log)
 	rf.matchIndex[rf.me] = len(rf.logs) - 1
-	Debug(dLog, "S%d append&start (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
+	Debug(dLog, "S%d start (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
 	Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
 	index := len(rf.logs) - 1
 	// 2. leader issue AppendEntries RPC in parallel to each of
@@ -258,6 +283,7 @@ func (rf *Raft) toCandidate() {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.state = Candidate
+	rf.persist()
 }
 
 // convert to follower, set term to t, reset voteFor
@@ -265,6 +291,7 @@ func (rf *Raft) toFollower(t int) {
 	rf.currentTerm = t
 	rf.votedFor = -1
 	rf.state = Follower
+	rf.persist()
 }
 
 func (rf *Raft) ResetLastHeartBeat() {

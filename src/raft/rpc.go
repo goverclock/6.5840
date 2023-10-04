@@ -75,6 +75,7 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 		}
 
 		rf.votedFor = args.CandidateId
+		rf.persist()
 		reply.VoteGranted = true
 		Debug(dVote, "S%d voted S%d", rf.me, args.CandidateId)
 		rf.ResetLastHeartBeat()
