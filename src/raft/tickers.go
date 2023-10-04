@@ -221,7 +221,7 @@ func (rf *Raft) appendEntryTicker() {
 			args.LeaderId = rf.me
 			args.PrevLogIndex = fni - 1
 			args.PrevLogTerm = rf.logs[fni-1].Term
-			args.Entries = append(args.Entries, rf.logs[fni])
+			args.Entries = append(args.Entries, rf.logs[fni:]...)
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntryReply{}
 			// send in parallel
@@ -252,7 +252,7 @@ func (rf *Raft) appendEntryTicker() {
 				}
 				if reply.Success { // Leader: if successful, update nextIndex and matchIndex for follower
 					rf.nextIndex[pi] = args.PrevLogIndex + len(args.Entries) + 1
-					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+1)
+					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+len(args.Entries))
 				} else { // Leader: if fails because of log inconsistency, decrement nextIndex and retry
 					if reply.XTerm == -1 {	// follower's log is too short
 						rf.nextIndex[pi] = reply.XLen

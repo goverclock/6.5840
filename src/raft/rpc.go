@@ -33,9 +33,9 @@ type AppendEntryReply struct {
 	Term    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
 	// for optimization to reduce number of rejected AppendEntry calls
-	XTerm	int	// term of the conflicting (follower's)entry(if any, else -1)
-	XIndex	int	// index of first entry with XTerm(if any, else -1)
-	XLen	int	// follower's log len
+	XTerm  int // term of the conflicting (follower's)entry(if any, else -1)
+	XIndex int // index of first entry with XTerm(if any, else -1)
+	XLen   int // follower's log len
 }
 
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -100,9 +100,6 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if len(args.Entries) > 1 {
-		panic("should only append at most 1 entry at one time")
-	}
 	// reset election timeout
 	rf.ResetLastHeartBeat()
 
@@ -133,22 +130,32 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		reply.Success = false
 		return
 	}
-	if rf.LogAt(prevInd).Term != args.PrevLogTerm {	// conflicting entry
+	if rf.LogAt(prevInd).Term != args.PrevLogTerm { // conflicting entry
 		reply.Success = false
 		reply.XTerm = rf.LogAt(prevInd).Term
 		reply.XIndex = rf.FirstWithTerm(reply.XTerm, prevInd)
 		return
 	}
-	if len(args.Entries) != 0 { // if not heart beat
+
+	entries := make([]LogEntry, len(args.Entries))
+	copy(entries, args.Entries)
+	if len(entries) != 0 { // if not heart beat
 		// 3. if an existing entry conflicts with a new one(same index, different term),
 		//  delete the existing entry and all that follow it
-		entry := args.Entries[0]
-		if logLen > prevInd+1 && rf.LogAt(prevInd+1).Term != entry.Term {
-			rf.LogRemoveFrom(prevInd + 1)
+		i := prevInd + 1
+		for rf.LogLen() > i && len(entries) != 0 {
+			ent := entries[0]
+			if rf.LogAt(i).Term != ent.Term {
+				rf.LogRemoveFrom(i)
+				break
+			}
+			entries = entries[1:]
+			i++
 		}
+
 		// 4. append any new entries *not already* in the log
-		if rf.LogLen() == prevInd+1 {
-			rf.LogAppend(entry)
+		if len(entries) != 0 {
+			rf.LogAppends(entries)
 		}
 	}
 	// 5. if leaderCommit > commitIndex, set commitIndex =

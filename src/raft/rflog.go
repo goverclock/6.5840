@@ -44,6 +44,12 @@ func (rf *Raft) LogAppend(log LogEntry) {
 	Debug(dLog, "S%d append (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
 }
 
+func (rf *Raft) LogAppends(log []LogEntry) {
+	rf.logs = append(rf.logs, log...)
+	rf.persist()
+	Debug(dLog, "S%d append (%d,%d)=%v (x%d)", rf.me, log[0].Term, len(rf.logs)-1, log[0].Command, len(log))
+}
+
 func (rf *Raft) SetCommitIndex(ci int) {
 	if rf.commitIndex >= ci {
 		return
