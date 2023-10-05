@@ -190,18 +190,8 @@ func (rf *Raft) applyTicker() {
 // Leader: if last log index > nextIndex for a follower: send
 // AppendEntry RPC with log entries starting at nextIndex
 func (rf *Raft) appendEntryTicker() {
-	numPeers := len(rf.peers)
-	doneCh := []chan int{} // make sure for each follower there is at most 1 ongoing AppendEntry RPC
-	cancelCh := []chan int{}
-	lastTermSent := []int{}
-	for i := 0; i < numPeers; i++ {
-		doneCh = append(doneCh, make(chan int, 1))
-		doneCh[i] <- 0
-		cancelCh = append(cancelCh, make(chan int))
-		lastTermSent = append(lastTermSent, -1)
-	}
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
@@ -209,21 +199,7 @@ func (rf *Raft) appendEntryTicker() {
 		}
 		lastLogIndex := len(rf.logs) - 1
 		for i, fni := range rf.nextIndex {
-			if lastTermSent[i] != -1 && lastTermSent[i] != rf.currentTerm {
-				// cancel AppendEntry call sent in stale term
-				select {
-				case cancelCh[i] <- 0:
-				default:
-				}
-			}
-
-			select {
-			case <-doneCh[i]:
-			default:
-				continue
-			}
 			if i == rf.me || lastLogIndex < fni { // fni - follower's next index
-				doneCh[i] <- 0
 				continue
 			}
 			// else lastLogIndex >= fni
@@ -236,28 +212,9 @@ func (rf *Raft) appendEntryTicker() {
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntryReply{}
 			// send in parallel
-			lastTermSent[i] = args.Term
 			go func(pi int) {
-				retCh := make(chan bool)
-				go func() {
-					Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-					retCh <- rf.sendAppendEntry(pi, &args, &reply)
-				}()
-				ok := false
-				select {
-				case ret := <-retCh:
-					ok = ret
-				case <-cancelCh[pi]:
-					Debug(dLog, "S%d cancel ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-					doneCh[pi] <- 0
-					<-retCh
-					return
-				}
-
-				// sendAppendEntry() has returned
-				defer func() {
-					doneCh[pi] <- 0
-				}()
+				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+				ok := rf.sendAppendEntry(pi, &args, &reply)
 				if !ok {
 					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
 					return
@@ -268,6 +225,7 @@ func (rf *Raft) appendEntryTicker() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 				if rf.currentTerm != args.Term { // stronger than rf.state != Leader
+					// the reply is stale, ignore
 					return
 				}
 				if reply.Term > rf.currentTerm {
