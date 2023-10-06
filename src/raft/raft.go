@@ -117,6 +117,7 @@ func (rf *Raft) persist() {
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
+	e.Encode(rf.logStartIndex)
 	e.Encode(rf.logs)
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
@@ -145,13 +146,15 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var ct int
 	var vf int
+	var lsi int
 	var lg []LogEntry
-	if d.Decode(&ct) != nil || d.Decode(&vf) != nil || d.Decode(&lg) != nil {
+	if d.Decode(&ct) != nil || d.Decode(&vf) != nil || d.Decode(&lsi) != nil || d.Decode(&lg) != nil {
 		Debug(dError, "S%d readPersist(): fail to decode", rf.me)
 		panic("readPersist() failed")
 	} else {
 		rf.currentTerm = ct
 		rf.votedFor = vf
+		rf.logStartIndex = lsi
 		rf.logs = lg
 	}
 }
@@ -162,7 +165,9 @@ func (rf *Raft) readPersist(data []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.LogTrimHead(index-1)
 }
 
 // the service using Raft (e.g. a k/v server) wants to start

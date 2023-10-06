@@ -13,7 +13,7 @@ func (rf *Raft) LogAt(i int) LogEntry {
 	if i == 0 { // dummy log
 		return LogEntry{}
 	}
-	// TODO: what if i < logStartIndex?
+	// TODO: what if i < logStartIndex?(snapshot)
 	return rf.logs[i-rf.logStartIndex]
 }
 
@@ -55,7 +55,14 @@ func (rf *Raft) LogRemoveFrom(i int) {
 	// TODO:snapshot
 	rf.logs = rf.logs[:i-rf.logStartIndex]
 	rf.persist()
-	Debug(dLog, "S%d remove log from %d", rf.me, i-rf.logStartIndex)
+	Debug(dLog, "S%d remove log [%d,]", rf.me, i)
+}
+
+func (rf *Raft) LogTrimHead(i int) {
+	rf.logs = rf.logs[i-rf.logStartIndex+1:]
+	rf.logStartIndex = i + 1
+	rf.persist()
+	Debug(dSnap, "S%d drop head log [,%d]", rf.me, i)
 }
 
 func (rf *Raft) LogAppend(log LogEntry) {

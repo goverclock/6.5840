@@ -20,7 +20,7 @@ const (
 	dLog     logTopic = "LOG1"
 	// dLog2    logTopic = "LOG2"
 	// dPersist logTopic = "PERS"
-	// dSnap    logTopic = "SNAP"
+	dSnap    logTopic = "SNAP"
 	dTerm    logTopic = "TERM"
 	// dTest    logTopic = "TEST"
 	dTimer   logTopic = "TIMR"
