@@ -31,7 +31,7 @@ func (rf *Raft) heartbeatTicker() {
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
 				args.PrevLogIndex = fni - 1
-				args.PrevLogTerm = rf.logs[fni-1].Term
+				args.PrevLogTerm = rf.LogAt(fni - 1).Term
 				args.LeaderCommit = rf.commitIndex
 				rf.mu.Unlock()
 
@@ -97,7 +97,7 @@ func (rf *Raft) electTicker() {
 					args := RequestVoteArgs{}
 					args.CandidateId = rf.me
 					args.Term = rf.currentTerm
-					args.LastLogIndex = rf.LogLen() - 1
+					args.LastLogIndex = rf.LogLen()
 					lastLog := rf.LogAt(args.LastLogIndex)
 					args.LastLogTerm = lastLog.Term
 					rf.mu.Unlock()
@@ -171,10 +171,10 @@ func (rf *Raft) applyTicker() {
 			rf.lastApplied++
 			msg := ApplyMsg{
 				CommandValid: true,
-				Command:      rf.logs[rf.lastApplied].Command,
+				Command:      rf.LogAt(rf.lastApplied).Command,
 				CommandIndex: rf.lastApplied,
 			}
-			t := rf.logs[rf.lastApplied].Term
+			t := rf.LogAt(rf.lastApplied).Term
 			ind := rf.lastApplied
 			rf.mu.Unlock()
 			rf.applyChan <- msg
@@ -197,7 +197,7 @@ func (rf *Raft) appendEntryTicker() {
 			rf.mu.Unlock()
 			continue
 		}
-		lastLogIndex := len(rf.logs) - 1
+		lastLogIndex := rf.LogLen()
 		for i, fni := range rf.nextIndex {
 			if i == rf.me || lastLogIndex < fni { // fni - follower's next index
 				continue
@@ -207,20 +207,14 @@ func (rf *Raft) appendEntryTicker() {
 			args.Term = rf.currentTerm
 			args.LeaderId = rf.me
 			args.PrevLogIndex = fni - 1
-			args.PrevLogTerm = rf.logs[fni-1].Term
-			args.Entries = append(args.Entries, rf.logs[fni:]...)
+			args.PrevLogTerm = rf.LogAt(fni - 1).Term
+			args.Entries = append(args.Entries, rf.LogFrom(fni)...)
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntryReply{}
 			// send in parallel
 			go func(pi int) {
 				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
 				ok := rf.sendAppendEntry(pi, &args, &reply)
-				if !ok {
-					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-					return
-				} else {
-					Debug(dLog, "S%d ae(%d,%d) to S%d(GOOD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
-				}
 
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
@@ -228,6 +222,13 @@ func (rf *Raft) appendEntryTicker() {
 					// the reply is stale, ignore
 					return
 				}
+				if !ok {
+					Debug(dLog, "S%d ae(%d,%d) to S%d(BAD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+					return
+				} else {
+					Debug(dLog, "S%d ae(%d,%d) to S%d(GOOD)", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+				}
+
 				if reply.Term > rf.currentTerm {
 					rf.ResetLastHeartBeat()
 					rf.toFollower(args.Term)
@@ -240,7 +241,7 @@ func (rf *Raft) appendEntryTicker() {
 					rf.matchIndex[pi] = max(rf.matchIndex[pi], args.PrevLogIndex+len(args.Entries))
 				} else { // Leader: if fails because of log inconsistency, decrement nextIndex and retry
 					if reply.XTerm == -1 { // follower's log is too short
-						rf.nextIndex[pi] = reply.XLen
+						rf.nextIndex[pi] = reply.XLen + 1
 					} else {
 						ok, ind := rf.HasTerm(reply.XTerm)
 						if !ok { // leader doesn't have XTerm
@@ -278,13 +279,13 @@ func (rf *Raft) commitTicker() {
 
 		// find minimum n where log[n].term == currentTerm && n > rf.commitIndex
 		n := rf.commitIndex + 1
-		for n < len(rf.logs) {
-			if rf.logs[n].Term == rf.currentTerm {
+		for n <= rf.LogLen() {
+			if rf.LogAt(n).Term == rf.currentTerm {
 				break
 			}
 			n++
 		}
-		if n == len(rf.logs) {
+		if n > rf.LogLen() {
 			rf.mu.Unlock()
 			continue
 		}
@@ -299,7 +300,7 @@ func (rf *Raft) commitTicker() {
 		}
 		if cnt >= len(rf.peers)/2+1 {
 			rf.commitIndex = n
-			Debug(dLog, "S%d commit (%d,%d)=%v", rf.me, rf.logs[rf.commitIndex].Term, rf.commitIndex, rf.logs[rf.commitIndex].Command)
+			Debug(dLog, "S%d commit (%d,%d)=%v", rf.me, rf.LogAt(rf.commitIndex).Term, rf.commitIndex, rf.LogAt(rf.commitIndex).Command)
 		}
 
 		rf.mu.Unlock()

@@ -51,11 +51,6 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-type LogEntry struct {
-	Term    int
-	Command interface{}
-}
-
 type State int
 
 const (
@@ -87,6 +82,8 @@ type Raft struct {
 
 	lastHeartBeat time.Time // time of receiving last heart beat(AppendEntry)
 	state         State     // Leader, Candidate, Follower
+	logStartIndex int
+
 	applyChan     chan ApplyMsg
 }
 
@@ -195,10 +192,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 	// 1. leader stores command in its own logs
 	rf.LogAppend(log)
-	rf.matchIndex[rf.me] = len(rf.logs) - 1
-	Debug(dLog, "S%d start (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
+	rf.matchIndex[rf.me] = rf.LogLen()
+	Debug(dLog, "S%d start (%d,%d)=%v", rf.me, log.Term, rf.LogLen(), log.Command)
 	Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
-	index := len(rf.logs) - 1
+	index := rf.LogLen()
 	// 2. leader issue AppendEntries RPC in parallel to each of
 	// 	the other servers to replicate the entry
 	// (this is done by AppendEntryTicker)
@@ -244,7 +241,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.logs = append(rf.logs, LogEntry{}) // dummy log
+	rf.logStartIndex = 1
 	rf.commitIndex = 0                    // no entry committed
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, numPeers)
@@ -273,7 +270,7 @@ func (rf *Raft) toLeader() {
 	numPeers := len(rf.peers)
 	rf.nextIndex = make([]int, numPeers) // initialized to leader last log index + 1
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = len(rf.logs)
+		rf.nextIndex[i] = rf.LogLen() + 1
 	}
 	rf.matchIndex = make([]int, numPeers) // initialized to 0, increases monotonically
 }

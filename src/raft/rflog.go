@@ -1,17 +1,30 @@
 package raft
 
+type LogEntry struct {
+	Term    int
+	Command interface{}
+}
+
 func (rf *Raft) LogLen() int {
-	return len(rf.logs)
+	return len(rf.logs) + rf.logStartIndex - 1
 }
 
 func (rf *Raft) LogAt(i int) LogEntry {
-	return rf.logs[i]
+	if i == 0 { // dummy log
+		return LogEntry{}
+	}
+	// TODO: what if i < logStartIndex?
+	return rf.logs[i-rf.logStartIndex]
 }
 
 // return index of first entry with term t
-// find in index range (0, bound)
+// find in index range [1, bound)
 func (rf *Raft) FirstWithTerm(t int, bound int) int {
-	for rf.logs[bound].Term == t {
+	// TODO: snapshot
+	if rf.LogAt(bound).Term != t {
+		panic("bad use of FirstWithTerm()")
+	}
+	for rf.LogAt(bound).Term == t {
 		bound--
 	}
 	return bound + 1
@@ -20,8 +33,9 @@ func (rf *Raft) FirstWithTerm(t int, bound int) int {
 // return if rf.logs contain entry with term,
 // if true, also return the index of last such entry
 func (rf *Raft) HasTerm(t int) (bool, int) {
-	for i := len(rf.logs) - 1; i > 0; i-- {
-		iTerm := rf.logs[i].Term
+	// TODO: snapshot
+	for i := rf.LogLen(); i >= 1; i-- {
+		iTerm := rf.LogAt(i).Term
 		if iTerm == t {
 			return true, i
 		}
@@ -32,22 +46,28 @@ func (rf *Raft) HasTerm(t int) (bool, int) {
 	return false, -1
 }
 
+func (rf *Raft) LogFrom(i int) []LogEntry {
+	// TODO: snapshot
+	return rf.logs[i-rf.logStartIndex:]
+}
+
 func (rf *Raft) LogRemoveFrom(i int) {
-	rf.logs = rf.logs[:i]
+	// TODO:snapshot
+	rf.logs = rf.logs[:i-rf.logStartIndex]
 	rf.persist()
-	Debug(dLog, "S%d remove log from %d", rf.me, i)
+	Debug(dLog, "S%d remove log from %d", rf.me, i-rf.logStartIndex)
 }
 
 func (rf *Raft) LogAppend(log LogEntry) {
 	rf.logs = append(rf.logs, log)
 	rf.persist()
-	Debug(dLog, "S%d append (%d,%d)=%v", rf.me, log.Term, len(rf.logs)-1, log.Command)
+	Debug(dLog, "S%d append (%d,%d)=%v", rf.me, log.Term, rf.LogLen(), log.Command)
 }
 
 func (rf *Raft) LogAppends(log []LogEntry) {
 	rf.logs = append(rf.logs, log...)
 	rf.persist()
-	Debug(dLog, "S%d append (%d,%d)=%v (x%d)", rf.me, log[0].Term, len(rf.logs)-1, log[0].Command, len(log))
+	Debug(dLog, "S%d append (%d,%d-%d)=%v (x%d)", rf.me, log[0].Term, rf.LogLen()-len(log)+1, rf.LogLen(), log[0].Command, len(log))
 }
 
 func (rf *Raft) SetCommitIndex(ci int) {

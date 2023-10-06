@@ -69,11 +69,11 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 		// if terms differ, higher term = more up-to-date
 		// else longer log = more up-to-date
 		logLen := rf.LogLen()
-		lastLog := rf.LogAt(logLen - 1)
+		lastLog := rf.LogAt(logLen)
 		if args.LastLogTerm < lastLog.Term {
 			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.me, args.CandidateId, args.LastLogTerm, lastLog.Term)
 			return
-		} else if args.LastLogTerm == lastLog.Term && args.LastLogIndex < logLen-1 {
+		} else if args.LastLogTerm == lastLog.Term && args.LastLogIndex < logLen {
 			Debug(dVote, "S%d deny S%d(log len)", rf.me, args.CandidateId)
 			return
 		}
@@ -126,7 +126,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 	reply.XTerm = -1
 	reply.XIndex = -1
 	reply.XLen = logLen
-	if logLen <= prevInd { // follower's log is too short
+	if logLen < prevInd { // follower's log is too short
 		reply.Success = false
 		return
 	}
@@ -143,7 +143,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		// 3. if an existing entry conflicts with a new one(same index, different term),
 		//  delete the existing entry and all that follow it
 		i := prevInd + 1
-		for rf.LogLen() > i && len(entries) != 0 {
+		for rf.LogLen() >= i && len(entries) != 0 {
 			ent := entries[0]
 			if rf.LogAt(i).Term != ent.Term {
 				rf.LogRemoveFrom(i)
