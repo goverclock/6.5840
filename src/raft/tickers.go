@@ -191,7 +191,7 @@ func (rf *Raft) applyTicker() {
 // AppendEntry RPC with log entries starting at nextIndex
 func (rf *Raft) appendEntryTicker() {
 	for !rf.killed() {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
