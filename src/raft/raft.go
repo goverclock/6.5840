@@ -297,7 +297,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	Debug(dClient, "S%d startup", rf.me)
 
 	go rf.electTicker()
-	go rf.heartbeatTicker()
 	go rf.applyTicker()
 	go rf.appendEntryTicker()
 	go rf.commitTicker()

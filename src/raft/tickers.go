@@ -5,57 +5,6 @@ import (
 	"time"
 )
 
-// send heartbeat(empty AppendEntries) when the server is leader
-func (rf *Raft) heartbeatTicker() {
-	for !rf.killed() {
-		rf.mu.Lock()
-		if rf.state != Leader {
-			rf.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		rf.mu.Unlock()
-
-		for i := range rf.peers {
-			if i == rf.me {
-				continue
-			}
-			go func(pi int) {
-				rf.mu.Lock()
-				if rf.state != Leader {
-					rf.mu.Unlock()
-					return
-				}
-				fni := rf.nextIndex[pi] // fni - follower's next index
-				args := AppendEntryArgs{}
-				args.Term = rf.currentTerm
-				args.LeaderId = rf.me
-				args.PrevLogIndex = fni - 1
-				args.PrevLogTerm = rf.LogAt(fni - 1).Term // TODO: snapshot
-				args.Entries = nil
-				args.LeaderCommit = rf.commitIndex
-				rf.mu.Unlock()
-
-				reply := AppendEntryReply{}
-				ok := rf.sendAppendEntry(pi, &args, &reply)
-				if ok {
-					Debug(dTimer, "S%d hb to S%d(GOOD)", rf.me, pi)
-				} else {
-					Debug(dTimer, "S%d hb to S%d(BAD)", rf.me, pi)
-				}
-				// if leader(or candidate) discovers higher term, become follower
-				rf.mu.Lock()
-				if reply.Term > rf.currentTerm {
-					Debug(dLeader, "S%d become follower(term %d)", rf.me, reply.Term)
-					rf.ResetLastHeartBeat()
-					rf.toFollower(reply.Term)
-				}
-				rf.mu.Unlock()
-			}(i)
-		}
-		time.Sleep(120 * time.Millisecond) // heart beat interval
-	}
-}
 
 func (rf *Raft) electTicker() {
 	randTimeout := time.Duration(600+(rand.Int()%300)) * time.Millisecond
@@ -190,6 +139,7 @@ func (rf *Raft) applyTicker() {
 
 // Leader: if last log index > nextIndex for a follower: send
 // AppendEntry RPC with log entries starting at nextIndex
+// *also serves as heart beat
 func (rf *Raft) appendEntryTicker() {
 	for !rf.killed() {
 		time.Sleep(100 * time.Millisecond)
@@ -200,7 +150,43 @@ func (rf *Raft) appendEntryTicker() {
 		}
 		lastLogIndex := rf.LogLen()
 		for i, fni := range rf.nextIndex {
-			if i == rf.me || lastLogIndex < fni { // fni - follower's next index
+			if i == rf.me {
+				continue
+			}
+			if lastLogIndex < fni { // fni - follower's next index
+				if fni != lastLogIndex+1 {
+					panic("fuck")
+				}
+
+				// send AE with no entry, serve as heart beat
+				args := AppendEntryArgs{}
+				args.Term = rf.currentTerm
+				args.LeaderId = rf.me
+				args.PrevLogIndex = lastLogIndex
+				args.PrevLogTerm = rf.LogAt(lastLogIndex).Term
+				args.Entries = nil
+				args.LeaderCommit = rf.commitIndex
+				reply := AppendEntryReply{}
+				go func(pi int) {
+					ok := rf.sendAppendEntry(pi, &args, &reply)
+
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					if ok {
+						Debug(dTimer, "S%d hb to S%d(GOOD)", rf.me, pi)
+					} else {
+						Debug(dTimer, "S%d hb to S%d(BAD)", rf.me, pi)
+					}
+					if rf.currentTerm != args.Term {
+						return
+					}
+					// if leader(or candidate) discovers higher term, become follower
+					if reply.Term > rf.currentTerm {
+						Debug(dLeader, "S%d become follower(term %d)", rf.me, reply.Term)
+						rf.ResetLastHeartBeat()
+						rf.toFollower(reply.Term)
+					}
+				}(i)
 				continue
 			}
 			// TODO: if fni-1 is not in log, install snapshot
