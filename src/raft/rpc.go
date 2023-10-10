@@ -80,11 +80,11 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 		// if terms differ, higher term = more up-to-date
 		// else longer log = more up-to-date
 		logLen := rf.LogLen()
-		lastLog := rf.LogAt(logLen)
-		if args.LastLogTerm < lastLog.Term {
-			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.me, args.CandidateId, args.LastLogTerm, lastLog.Term)
+		lastLogTerm := rf.LogTermAt(logLen)
+		if args.LastLogTerm < lastLogTerm {
+			Debug(dVote, "S%d deny S%d(term %d<%d)", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
 			return
-		} else if args.LastLogTerm == lastLog.Term && args.LastLogIndex < logLen {
+		} else if args.LastLogTerm == lastLogTerm && args.LastLogIndex < logLen {
 			Debug(dVote, "S%d deny S%d(log len)", rf.me, args.CandidateId)
 			return
 		}
@@ -142,9 +142,9 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		reply.Success = false
 		return
 	}
-	if rf.LogAt(prevInd).Term != args.PrevLogTerm { // conflicting entry
+	if rf.LogTermAt(prevInd) != args.PrevLogTerm { // conflicting entry
 		reply.Success = false
-		reply.XTerm = rf.LogAt(prevInd).Term
+		reply.XTerm = rf.LogTermAt(prevInd)
 		reply.XIndex = rf.FirstWithTerm(reply.XTerm, prevInd)
 		return
 	}
@@ -184,6 +184,7 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	Debug(dSnap, "S%d rec snapshot(%d)", rf.me, args.LastIncludedIndex)
 	reply.Term = rf.currentTerm
 	// 1. reply immediately if term < currentTerm
 	if args.Term < rf.currentTerm {
@@ -214,6 +215,16 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 		SnapshotIndex: lii,
 	}
 	rf.applyChan <- msg
+	Debug(dSnap, "S%d installed snapshot(%d)", rf.me, args.LastIncludedIndex)
+
+	// reset nearly everything in Raft object
+	rf.commitIndex = lii
+	rf.lastApplied = lii
+	rf.ResetLastHeartBeat()
+	rf.logStartIndex = lii + 1
+	rf.snapShot = args.Data
+	rf.lastIncludedIndex = lii
+	rf.lastIncludedTerm = lit
 }
 
 // example code to send a RequestVote RPC to a server.

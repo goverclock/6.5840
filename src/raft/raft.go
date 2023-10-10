@@ -200,7 +200,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.snapShot = snapshot
 	rf.lastIncludedIndex = index
 	rf.lastIncludedTerm = rf.LogAt(index).Term
-	rf.LogTrimHead(index - 1)
+	rf.LogTrimHead(index)
 	rf.persist()
 }
 

@@ -18,6 +18,16 @@ func (rf *Raft) LogAt(i int) LogEntry {
 	return rf.logs[i-rf.logStartIndex]
 }
 
+func (rf *Raft) LogTermAt(i int) int {
+	if i >= rf.logStartIndex {
+		return rf.LogAt(i).Term
+	}
+	if i == rf.logStartIndex - 1 {
+		return rf.lastIncludedTerm
+	}
+	panic("LogTermAt() fuck")
+}
+
 // return index of first entry with term t
 // find in index range [1, bound)
 func (rf *Raft) FirstWithTerm(t int, bound int) int {

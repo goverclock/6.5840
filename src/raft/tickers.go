@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-
 func (rf *Raft) electTicker() {
 	randTimeout := time.Duration(600+(rand.Int()%300)) * time.Millisecond
 	for !rf.killed() {
@@ -48,8 +47,7 @@ func (rf *Raft) electTicker() {
 					args.CandidateId = rf.me
 					args.Term = rf.currentTerm
 					args.LastLogIndex = rf.LogLen()
-					lastLog := rf.LogAt(args.LastLogIndex)
-					args.LastLogTerm = lastLog.Term
+					args.LastLogTerm = rf.LogTermAt(args.LastLogIndex)
 					rf.mu.Unlock()
 
 					reply := RequestVoteReply{}
@@ -149,21 +147,22 @@ func (rf *Raft) appendEntryTicker() {
 			continue
 		}
 		lastLogIndex := rf.LogLen()
-		for i, fni := range rf.nextIndex {
+		for i, fni := range rf.nextIndex { // fni - follower's next index
 			if i == rf.me {
 				continue
 			}
-			if lastLogIndex < fni { // fni - follower's next index
+
+			// send AE with no entry, serve as heart beat
+			if lastLogIndex < fni {
 				if fni != lastLogIndex+1 {
-					panic("fuck")
+					panic("appendEntryTicker() fuck")
 				}
 
-				// send AE with no entry, serve as heart beat
 				args := AppendEntryArgs{}
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
 				args.PrevLogIndex = lastLogIndex
-				args.PrevLogTerm = rf.LogAt(lastLogIndex).Term
+				args.PrevLogTerm = rf.LogTermAt(lastLogIndex)
 				args.Entries = nil
 				args.LeaderCommit = rf.commitIndex
 				reply := AppendEntryReply{}
@@ -204,7 +203,7 @@ func (rf *Raft) appendEntryTicker() {
 
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
-					if rf.currentTerm != args.Term {
+					if rf.currentTerm != args.Term {	// stale reply
 						return
 					}
 					if !ok {
@@ -213,10 +212,15 @@ func (rf *Raft) appendEntryTicker() {
 					}
 					Debug(dSnap, "S%d snapshot(%d) to S%d(GOOD)", rf.me, args.LastIncludedIndex, i)
 					if reply.Term > rf.currentTerm {
+						// step down
 						rf.ResetLastHeartBeat()
 						rf.toFollower(args.Term)
 						Debug(dClient, "S%d become follower(snapshot reply)", rf.me)
 						Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+					} else {
+						// else update next index
+						rf.nextIndex[i] = args.LastIncludedIndex + 1
+						Debug(dLog, "S%d update ni=%v", rf.me, rf.nextIndex)
 					}
 				}()
 				continue
@@ -227,7 +231,7 @@ func (rf *Raft) appendEntryTicker() {
 			args.Term = rf.currentTerm
 			args.LeaderId = rf.me
 			args.PrevLogIndex = fni - 1
-			args.PrevLogTerm = rf.LogAt(fni - 1).Term
+			args.PrevLogTerm = rf.LogTermAt(fni - 1)
 			args.Entries = append(args.Entries, rf.LogFrom(fni)...)
 			args.LeaderCommit = rf.commitIndex
 			reply := AppendEntryReply{}
