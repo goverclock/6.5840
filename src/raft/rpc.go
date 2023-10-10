@@ -1,10 +1,6 @@
 package raft
 
-import (
-	"sync"
-)
-
-var handlerLock sync.Mutex // should be acquired whenever invoke a RPC handler
+// var handlerLock sync.Mutex // should be acquired whenever invoke a RPC handler
 
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
@@ -38,13 +34,28 @@ type AppendEntryReply struct {
 	XLen   int // follower's log len
 }
 
+type InstallSnapshotArgs struct {
+	Term int // leader's term
+	// LeaderId int	// so follower can redirect clients
+	LastIncludedIndex int // the snapshot replaces all entries up through and including this index
+	LastIncludedTerm  int // term of lastIncludedIndex
+	// Offset	int
+	Data []byte // raw bytes of the snapshot
+	// Done	bool
+}
+
+type InstallSnapshotReply struct {
+	Term int // for leader to update itself
+}
+
 func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	handlerLock.Lock()
-	defer handlerLock.Unlock()
 
+	// handlerLock.Lock()
+	// defer handlerLock.Unlock()
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	// reveiver implementation:
 	// 1. reply false if term < currentTerm
 	reply.Term = rf.currentTerm
@@ -87,8 +98,10 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 }
 
 func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryReply) {
-	handlerLock.Lock()
-	defer handlerLock.Unlock()
+	// handlerLock.Lock()
+	// defer handlerLock.Unlock()
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	defer func() {
 		if len(args.Entries) != 0 {
@@ -98,8 +111,6 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		}
 	}()
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	// reset election timeout
 	rf.ResetLastHeartBeat()
 
@@ -113,6 +124,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 
 	reply.Term = rf.currentTerm
 	reply.Success = true
+
 	// receiver implementation for replicaing log entries
 	// 1. reply false if term < currentTerm
 	if rf.currentTerm > args.Term {
@@ -158,11 +170,50 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 			rf.LogAppends(entries)
 		}
 	}
+
 	// 5. if leaderCommit > commitIndex, set commitIndex =
 	//  min(leaderCommit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
 		rf.SetCommitIndex(min(args.LeaderCommit, prevInd+len(args.Entries)))
 	}
+}
+
+func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	// handlerLock.Lock()
+	// defer handlerLock.Unlock()
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+	// 1. reply immediately if term < currentTerm
+	if args.Term < rf.currentTerm {
+		return
+	}
+
+	// 2-5. create snapshot file, write data into it, discard any existing
+	// or partial snapshot with a smaller index
+
+	// 6. if existing log entry has same index and term as snapshot's last included entry,
+	// retain log entries following it and *reply*(not applying the snapshot)
+	lii := args.LastIncludedIndex
+	lit := args.LastIncludedTerm
+	if rf.LogLen() >= lii && rf.LogAt(lii).Term == lit {
+		rf.LogTrimHead(lii)
+		return
+	}
+
+	// 7. discard the entire log
+	rf.logs = nil
+
+	// 8. reset state machine using snapshot contents(...)
+	msg := ApplyMsg{
+		CommandValid:  false,
+		SnapshotValid: true,
+		Snapshot:      args.Data,
+		SnapshotTerm:  lit,
+		SnapshotIndex: lii,
+	}
+	rf.applyChan <- msg
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -201,5 +252,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 func (rf *Raft) sendAppendEntry(server int, args *AppendEntryArgs, reply *AppendEntryReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntryHandler", args, reply)
+	return ok
+}
+
+func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
+	ok := rf.peers[server].Call("Raft.InstallSnapshotHandler", args, reply)
 	return ok
 }

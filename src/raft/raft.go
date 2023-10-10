@@ -84,7 +84,12 @@ type Raft struct {
 	state         State     // Leader, Candidate, Follower
 	logStartIndex int
 
-	applyChan     chan ApplyMsg
+	// snapshot
+	snapShot          []byte
+	lastIncludedIndex int
+	lastIncludedTerm  int
+
+	applyChan chan ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -119,8 +124,10 @@ func (rf *Raft) persist() {
 	e.Encode(rf.votedFor)
 	e.Encode(rf.logStartIndex)
 	e.Encode(rf.logs)
+	e.Encode(rf.lastIncludedIndex)
+	e.Encode(rf.lastIncludedTerm)
 	raftstate := w.Bytes()
-	rf.persister.Save(raftstate, nil)
+	rf.persister.Save(raftstate, rf.snapShot)
 }
 
 // restore previously persisted state.
@@ -148,7 +155,10 @@ func (rf *Raft) readPersist(data []byte) {
 	var vf int
 	var lsi int
 	var lg []LogEntry
-	if d.Decode(&ct) != nil || d.Decode(&vf) != nil || d.Decode(&lsi) != nil || d.Decode(&lg) != nil {
+	var lii int
+	var lit int
+	if d.Decode(&ct) != nil || d.Decode(&vf) != nil || d.Decode(&lsi) != nil ||
+		d.Decode(&lg) != nil || d.Decode(&lii) != nil || d.Decode(&lit) != nil {
 		Debug(dError, "S%d readPersist(): fail to decode", rf.me)
 		panic("readPersist() failed")
 	} else {
@@ -156,7 +166,26 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.votedFor = vf
 		rf.logStartIndex = lsi
 		rf.logs = lg
+		rf.lastIncludedIndex = lii
+		rf.lastIncludedTerm = lit
 	}
+}
+
+// must be called after readPersist() in rf.Make()
+func (rf *Raft) readSnapshot(data []byte) {
+	if data == nil || len(data) < 1 {
+		return
+	}
+
+	// apply the snapshot
+	msg := ApplyMsg{
+		CommandValid:  false,
+		SnapshotValid: true,
+		Snapshot:      data,
+		SnapshotIndex: rf.lastIncludedIndex,
+		SnapshotTerm:  rf.lastIncludedTerm,
+	}
+	rf.applyChan <- msg
 }
 
 // the service says it has created a snapshot that has
@@ -167,7 +196,12 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.LogTrimHead(index-1)
+
+	rf.snapShot = snapshot
+	rf.lastIncludedIndex = index
+	rf.lastIncludedTerm = rf.LogAt(index).Term
+	rf.LogTrimHead(index - 1)
+	rf.persist()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -247,7 +281,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.logStartIndex = 1
-	rf.commitIndex = 0                    // no entry committed
+	rf.snapShot = nil
+	rf.commitIndex = 0 // no entry committed
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, numPeers)
 	rf.matchIndex = make([]int, numPeers)
@@ -257,6 +292,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.readSnapshot(persister.ReadSnapshot())
 
 	Debug(dClient, "S%d startup", rf.me)
 

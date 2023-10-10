@@ -13,14 +13,14 @@ func (rf *Raft) LogAt(i int) LogEntry {
 	if i == 0 { // dummy log
 		return LogEntry{}
 	}
-	// TODO: what if i < logStartIndex?(snapshot)
+	// TODO: if i < logStartIndex, should install snapshot,
+	// *but should invoke before reaching this point*
 	return rf.logs[i-rf.logStartIndex]
 }
 
 // return index of first entry with term t
 // find in index range [1, bound)
 func (rf *Raft) FirstWithTerm(t int, bound int) int {
-	// TODO: snapshot
 	if rf.LogAt(bound).Term != t {
 		panic("bad use of FirstWithTerm()")
 	}
@@ -33,7 +33,6 @@ func (rf *Raft) FirstWithTerm(t int, bound int) int {
 // return if rf.logs contain entry with term,
 // if true, also return the index of last such entry
 func (rf *Raft) HasTerm(t int) (bool, int) {
-	// TODO: snapshot
 	for i := rf.LogLen(); i >= 1; i-- {
 		iTerm := rf.LogAt(i).Term
 		if iTerm == t {
@@ -47,12 +46,10 @@ func (rf *Raft) HasTerm(t int) (bool, int) {
 }
 
 func (rf *Raft) LogFrom(i int) []LogEntry {
-	// TODO: snapshot
 	return rf.logs[i-rf.logStartIndex:]
 }
 
 func (rf *Raft) LogRemoveFrom(i int) {
-	// TODO:snapshot
 	rf.logs = rf.logs[:i-rf.logStartIndex]
 	rf.persist()
 	Debug(dLog, "S%d remove log [%d,]", rf.me, i)

@@ -31,7 +31,8 @@ func (rf *Raft) heartbeatTicker() {
 				args.Term = rf.currentTerm
 				args.LeaderId = rf.me
 				args.PrevLogIndex = fni - 1
-				args.PrevLogTerm = rf.LogAt(fni - 1).Term
+				args.PrevLogTerm = rf.LogAt(fni - 1).Term // TODO: snapshot
+				args.Entries = nil
 				args.LeaderCommit = rf.commitIndex
 				rf.mu.Unlock()
 
@@ -202,6 +203,39 @@ func (rf *Raft) appendEntryTicker() {
 			if i == rf.me || lastLogIndex < fni { // fni - follower's next index
 				continue
 			}
+			// TODO: if fni-1 is not in log, install snapshot
+			if fni < rf.logStartIndex {
+				args := InstallSnapshotArgs{}
+				args.Term = rf.currentTerm
+				args.LastIncludedIndex = rf.lastIncludedIndex
+				args.LastIncludedTerm = rf.lastIncludedTerm
+				args.Data = rf.snapShot
+				reply := InstallSnapshotReply{}
+				i := i
+				go func() {
+					Debug(dSnap, "S%d sending snapshot(%d) to S%d", rf.me, args.LastIncludedIndex, i)
+					ok := rf.sendInstallSnapshot(i, &args, &reply)
+
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					if rf.currentTerm != args.Term {
+						return
+					}
+					if !ok {
+						Debug(dSnap, "S%d snapshot(%d) to S%d(BAD)", rf.me, args.LastIncludedIndex, i)
+						return
+					}
+					Debug(dSnap, "S%d snapshot(%d) to S%d(GOOD)", rf.me, args.LastIncludedIndex, i)
+					if reply.Term > rf.currentTerm {
+						rf.ResetLastHeartBeat()
+						rf.toFollower(args.Term)
+						Debug(dClient, "S%d become follower(snapshot reply)", rf.me)
+						Debug(dTerm, "S%d term=%d", rf.me, rf.currentTerm)
+					}
+				}()
+				continue
+			}
+
 			// else lastLogIndex >= fni
 			args := AppendEntryArgs{}
 			args.Term = rf.currentTerm
@@ -213,7 +247,7 @@ func (rf *Raft) appendEntryTicker() {
 			reply := AppendEntryReply{}
 			// send in parallel
 			go func(pi int) {
-				Debug(dLog, "S%d sending ae(%d,%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, pi)
+				Debug(dLog, "S%d sending ae(%d,%d-%d) to S%d", rf.me, args.Entries[0].Term, args.PrevLogIndex+1, args.PrevLogIndex+len(args.Entries), pi)
 				ok := rf.sendAppendEntry(pi, &args, &reply)
 
 				rf.mu.Lock()
