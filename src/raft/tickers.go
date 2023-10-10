@@ -122,7 +122,7 @@ func (rf *Raft) applyTicker() {
 				Command:      rf.LogAt(rf.lastApplied).Command,
 				CommandIndex: rf.lastApplied,
 			}
-			t := rf.LogAt(rf.lastApplied).Term
+			t := rf.LogTermAt(rf.lastApplied)
 			ind := rf.lastApplied
 			rf.mu.Unlock()
 			rf.applyChan <- msg
@@ -304,7 +304,7 @@ func (rf *Raft) commitTicker() {
 		// find minimum n where log[n].term == currentTerm && n > rf.commitIndex
 		n := rf.commitIndex + 1
 		for n <= rf.LogLen() {
-			if rf.LogAt(n).Term == rf.currentTerm {
+			if rf.LogTermAt(n)== rf.currentTerm {
 				break
 			}
 			n++
@@ -324,7 +324,7 @@ func (rf *Raft) commitTicker() {
 		}
 		if cnt >= len(rf.peers)/2+1 {
 			rf.commitIndex = n
-			Debug(dLog, "S%d commit (%d,%d)=%v", rf.me, rf.LogAt(rf.commitIndex).Term, rf.commitIndex, rf.LogAt(rf.commitIndex).Command)
+			Debug(dLog, "S%d commit (%d,%d)=%v", rf.me, rf.LogTermAt(rf.commitIndex), rf.commitIndex, rf.LogAt(rf.commitIndex).Command)
 		}
 
 		rf.mu.Unlock()

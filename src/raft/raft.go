@@ -178,14 +178,27 @@ func (rf *Raft) readSnapshot(data []byte) {
 	}
 
 	// apply the snapshot
+	lii := rf.lastIncludedIndex
+	lit := rf.lastIncludedTerm
+	rf.snapShot = data
 	msg := ApplyMsg{
 		CommandValid:  false,
 		SnapshotValid: true,
 		Snapshot:      data,
-		SnapshotIndex: rf.lastIncludedIndex,
-		SnapshotTerm:  rf.lastIncludedTerm,
+		SnapshotIndex: lii,
+		SnapshotTerm:  lit,
 	}
-	rf.applyChan <- msg
+	rf.mu.Lock()
+	go func() {
+		rf.applyChan <- msg
+		rf.mu.Unlock()
+	}()
+	rf.commitIndex = lii
+	rf.lastApplied = lii
+	rf.ResetLastHeartBeat()
+	rf.logStartIndex = lii + 1
+	rf.lastIncludedIndex = lii
+	rf.lastIncludedTerm = lit
 }
 
 // the service says it has created a snapshot that has
@@ -232,7 +245,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// 1. leader stores command in its own logs
 	rf.LogAppend(log)
 	rf.matchIndex[rf.me] = rf.LogLen()
-	Debug(dLog, "S%d start (%d,%d)=%v", rf.me, log.Term, rf.LogLen(), log.Command)
+	Debug(dLog2, "S%d start (%d,%d)=%v", rf.me, log.Term, rf.LogLen(), log.Command)
 	Debug(dLog, "S%d ni=%v", rf.me, rf.nextIndex)
 	index := rf.LogLen()
 	// 2. leader issue AppendEntries RPC in parallel to each of
