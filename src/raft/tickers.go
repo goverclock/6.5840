@@ -6,7 +6,7 @@ import (
 )
 
 func (rf *Raft) electTicker() {
-	randTimeout := time.Duration(600+(rand.Int()%300)) * time.Millisecond
+	randTimeout := time.Duration(500+(rand.Int()%300)) * time.Millisecond
 	for !rf.killed() {
 		// Your code here (2A)
 		// Check if a leader election should be started.
@@ -19,8 +19,8 @@ func (rf *Raft) electTicker() {
 			continue
 		}
 
-		// 600 ~ 900ms election timeout
-		randTimeout = time.Duration(600+(rand.Int()%300)) * time.Millisecond
+		// 500 ~ 800ms election timeout
+		randTimeout = time.Duration(500+(rand.Int()%300)) * time.Millisecond
 
 		// election timeout
 		rf.ResetLastHeartBeat() // reset election timeout
