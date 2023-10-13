@@ -188,7 +188,7 @@ func (rf *Raft) appendEntryTicker() {
 				}(i)
 				continue
 			}
-			// TODO: if fni-1 is not in log, install snapshot
+			// if fni-1 is not in log, install snapshot
 			if fni < rf.logStartIndex {
 				args := InstallSnapshotArgs{}
 				args.Term = rf.currentTerm

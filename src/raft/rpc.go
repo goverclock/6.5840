@@ -157,7 +157,7 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		i := prevInd + 1
 		for rf.LogLen() >= i && len(entries) != 0 {
 			ent := entries[0]
-			if rf.LogTermAt(i)!= ent.Term {
+			if rf.LogTermAt(i) != ent.Term {
 				rf.LogRemoveFrom(i)
 				break
 			}
@@ -199,7 +199,10 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 	lii := args.LastIncludedIndex
 	lit := args.LastIncludedTerm
 	if rf.LogLen() >= lii && rf.LogTermAt(lii) == lit {
-		rf.LogTrimHead(lii)
+		if rf.lastApplied >= lii {
+			rf.LogTrimHead(lii)
+		}
+		Debug(dSnap, "S%d discard snapshot(%d)", rf.me, args.LastIncludedIndex)
 		return
 	}
 
