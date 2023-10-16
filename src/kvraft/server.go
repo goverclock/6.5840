@@ -1,29 +1,13 @@
 package kvraft
 
 import (
+	"sync"
+	"sync/atomic"
+
 	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raft"
-	"log"
-	"sync"
-	"sync/atomic"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
 
 type KVServer struct {
 	mu      sync.Mutex
@@ -35,15 +19,7 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-}
-
-
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-}
-
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	db map[string]string
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -90,8 +66,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
-	// You may need initialization code here.
+	kv.db = make(map[string]string)
 
 	return kv
 }
