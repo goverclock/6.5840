@@ -139,8 +139,11 @@ func (rf *Raft) applyTicker() {
 // AppendEntry RPC with log entries starting at nextIndex
 // *also serves as heart beat
 func (rf *Raft) appendEntryTicker() {
+	hbCount := 0
 	for !rf.killed() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
+		hbCount++
+		hbCount %= 10	// send 1 heartbeat every 10 loops(e.g. limit rate at 1hb/100ms)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
@@ -154,6 +157,9 @@ func (rf *Raft) appendEntryTicker() {
 
 			// send AE with no entry, serve as heart beat
 			if lastLogIndex < fni {
+				if hbCount != 0 {
+					continue
+				}
 				if fni != lastLogIndex+1 {
 					panic("appendEntryTicker() fuck")
 				}
@@ -167,15 +173,16 @@ func (rf *Raft) appendEntryTicker() {
 				args.LeaderCommit = rf.commitIndex
 				reply := AppendEntryReply{}
 				go func(pi int) {
+					Debug(dTimer, "S%d hbing to S%d", rf.me, pi)
 					ok := rf.sendAppendEntry(pi, &args, &reply)
-
-					rf.mu.Lock()
-					defer rf.mu.Unlock()
 					if ok {
 						Debug(dTimer, "S%d hb to S%d(GOOD)", rf.me, pi)
 					} else {
 						Debug(dTimer, "S%d hb to S%d(BAD)", rf.me, pi)
 					}
+
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
 					if rf.currentTerm != args.Term {
 						return
 					}

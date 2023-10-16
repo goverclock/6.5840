@@ -132,6 +132,12 @@ func (rf *Raft) AppendEntryHandler(args *AppendEntryArgs, reply *AppendEntryRepl
 		return
 	}
 	prevInd := args.PrevLogIndex
+	// 2D: if prevInd is already dropped due to snapshot, the AppendEntry call is stale
+	// just reply success=true
+	if prevInd < rf.logStartIndex - 1 {
+		reply.Success = true
+		return
+	}
 	// 2. reply false if log doesn't contain an entry at preLogIndex whose
 	// 	term matches prevLogTerm
 	logLen := rf.LogLen()
@@ -184,10 +190,17 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	Debug(dSnap, "S%d rec snapshot(%d)", rf.me, args.LastIncludedIndex)
+	lii := args.LastIncludedIndex
+	lit := args.LastIncludedTerm
+	Debug(dSnap, "S%d rec snapshot(%d)", rf.me, lii)
 	reply.Term = rf.currentTerm
 	// 1. reply immediately if term < currentTerm
 	if args.Term < rf.currentTerm {
+		return
+	}
+
+	// ignore stale snapshot call
+	if lii < rf.logStartIndex {
 		return
 	}
 
@@ -196,8 +209,6 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 
 	// 6. if existing log entry has same index and term as snapshot's last included entry,
 	// retain log entries following it and *reply*(not applying the snapshot)
-	lii := args.LastIncludedIndex
-	lit := args.LastIncludedTerm
 	if rf.LogLen() >= lii && rf.LogTermAt(lii) == lit {
 		if rf.lastApplied >= lii {
 			rf.LogTrimHead(lii)

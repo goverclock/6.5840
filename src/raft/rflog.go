@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 type LogEntry struct {
 	Term    int
 	Command interface{}
@@ -25,7 +27,8 @@ func (rf *Raft) LogTermAt(i int) int {
 	if i == rf.logStartIndex - 1 {
 		return rf.lastIncludedTerm
 	}
-	panic("LogTermAt() fuck")
+	fmt.Println("LogTermAt()", i)
+	panic("LogTermAt()")
 }
 
 // return index of first entry with term t
