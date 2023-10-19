@@ -20,6 +20,9 @@ type KVServer struct {
 
 	// Your definitions here.
 	db map[string]string
+	// one table entry per client
+	// reply type is always string for a k/v service
+	duplicate map[int64]map[int64]string
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -68,6 +71,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.db = make(map[string]string)
+	kv.duplicate = make(map[int64]map[int64]string)
 
 	return kv
 }
