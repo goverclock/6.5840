@@ -2,7 +2,6 @@ package kvraft
 
 import (
 	"crypto/rand"
-	"fmt"
 	"math/big"
 
 	"6.5840/labrpc"
@@ -41,7 +40,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 
-	fmt.Printf("Clerk Get(%v)\n", key)
 	// retry until found leader server and succeed
 	ind := 0
 	ok := false
@@ -51,6 +49,7 @@ func (ck *Clerk) Get(key string) string {
 		reply := GetReply{}
 		ok = ck.sendGet(ind, &args, &reply)
 		if ok && reply.Err == OK {
+			// fmt.Printf("C:Get(%v)=%v\n", key, reply.Value)
 			return reply.Value
 		}
 		ind = (ind + 1) % len(ck.servers)
@@ -86,10 +85,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	fmt.Printf("Clerk Put(%v,%v)\n", key, value)
+	// defer fmt.Printf("C:Put(%v,%v)\n", key, value)
 	ck.PutAppend(key, value, "Put")
 }
 func (ck *Clerk) Append(key string, value string) {
-	fmt.Printf("Clerk Append(%v,%v)\n", key, value)
+	// defer fmt.Printf("C:Append(%v,%v)\n", key, value)
 	ck.PutAppend(key, value, "Append")
 }

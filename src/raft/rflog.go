@@ -24,7 +24,7 @@ func (rf *Raft) LogTermAt(i int) int {
 	if i >= rf.logStartIndex {
 		return rf.LogAt(i).Term
 	}
-	if i == rf.logStartIndex - 1 {
+	if i == rf.logStartIndex-1 {
 		return rf.lastIncludedTerm
 	}
 	fmt.Println("LogTermAt()", i)
@@ -34,12 +34,12 @@ func (rf *Raft) LogTermAt(i int) int {
 // return index of first entry with term t
 // find in index range [1, bound)
 func (rf *Raft) FirstWithTerm(t int, bound int) int {
-	if rf.LogTermAt(bound)!= t {
+	if rf.LogTermAt(bound) != t {
 		panic("bad use of FirstWithTerm()")
 	}
-	for rf.LogTermAt(bound)== t {
+	for rf.LogTermAt(bound) == t {
 		bound--
-		if bound < rf.logStartIndex - 1 {
+		if bound < rf.logStartIndex-1 {
 			break
 		}
 	}
@@ -49,7 +49,7 @@ func (rf *Raft) FirstWithTerm(t int, bound int) int {
 // return if rf.logs contain entry with term,
 // if true, also return the index of last such entry
 func (rf *Raft) HasTerm(t int) (bool, int) {
-	for i := rf.LogLen(); i >= rf.logStartIndex - 1; i-- {
+	for i := rf.LogLen(); i >= rf.logStartIndex-1; i-- {
 		iTerm := rf.LogTermAt(i)
 		if iTerm == t {
 			return true, i

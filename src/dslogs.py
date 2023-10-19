@@ -66,6 +66,9 @@ def main(
     panic = False
     for line in input_:
         try:
+            if line[0] == 'C':
+                print(line)
+                continue
             time, topic, *msg = line.strip().split(" ")
             # To ignore some topics
             if topic not in topics:

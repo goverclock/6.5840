@@ -50,8 +50,8 @@ func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply)
 		return
 	}
 	// convert args to operation to send to raft
-	op := Op {
-		Key: args.Key,
+	op := Op{
+		Key:   args.Key,
 		Value: args.Value,
 	}
 	if args.Op == "Put" {
@@ -93,9 +93,9 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrNoKey
 		return
 	}
-	op := Op {
+	op := Op{
 		Type: OpGet,
-		Key: args.Key,
+		Key:  args.Key,
 	}
 	_, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -119,10 +119,20 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 
 func (ck *Clerk) sendPutAppend(server int, args *PutAppendArgs, reply *PutAppendReply) bool {
 	ok := ck.servers[server].Call("KVServer.PutAppendHandler", args, reply)
+	// if ok {
+	// 	fmt.Printf("C:sentPA(%v,%v)(GOOD)\n", args.Key, args.Value)
+	// } else {
+	// 	fmt.Printf("C:sentPA(%v,%v)(BAD)\n", args.Key, args.Value)
+	// }
 	return ok
 }
 
 func (ck *Clerk) sendGet(server int, args *GetArgs, reply *GetReply) bool {
 	ok := ck.servers[server].Call("KVServer.GetHandler", args, reply)
+	// if ok {
+	// 	fmt.Printf("C:sentGet(%v)(GOOD)\n", args.Key)
+	// } else {
+	// 	fmt.Printf("C:sentGet(%v)(BAD)\n", args.Key)
+	// }
 	return ok
 }

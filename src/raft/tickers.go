@@ -126,7 +126,7 @@ func (rf *Raft) applyTicker() {
 			ind := rf.lastApplied
 			rf.mu.Unlock()
 			rf.applyChan <- msg
-			Debug(dLog, "S%d apply (%d,%d)=%v", rf.me, t, ind, msg.Command)
+			Debug(dLog2, "S%d apply (%d,%d)=%v", rf.me, t, ind, msg.Command)
 			// not sleeping here to accelerate
 		} else {
 			rf.mu.Unlock()
@@ -143,7 +143,7 @@ func (rf *Raft) appendEntryTicker() {
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
 		hbCount++
-		hbCount %= 10	// send 1 heartbeat every 10 loops(e.g. limit rate at 1hb/100ms)
+		hbCount %= 10 // send 1 heartbeat every 10 loops(e.g. limit rate at 1hb/100ms)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
@@ -210,7 +210,7 @@ func (rf *Raft) appendEntryTicker() {
 
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
-					if rf.currentTerm != args.Term {	// stale reply
+					if rf.currentTerm != args.Term { // stale reply
 						return
 					}
 					if !ok {
@@ -311,7 +311,7 @@ func (rf *Raft) commitTicker() {
 		// find minimum n where log[n].term == currentTerm && n > rf.commitIndex
 		n := rf.commitIndex + 1
 		for n <= rf.LogLen() {
-			if rf.LogTermAt(n)== rf.currentTerm {
+			if rf.LogTermAt(n) == rf.currentTerm {
 				break
 			}
 			n++
