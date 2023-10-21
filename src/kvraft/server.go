@@ -24,7 +24,7 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	db map[string]string
+	db map[string]string	// should only be changed in executeChan
 	// one table entry per client
 	// reply type is always string for a k/v service
 	duplicate map[int64]DuplicateEntry
@@ -77,6 +77,32 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.db = make(map[string]string)
 	kv.duplicate = make(map[int64]DuplicateEntry)
+	go kv.executeChan()
 
 	return kv
+}
+
+// keep reading applyCh and execute commands
+// also updates duplicate table
+func (kv *KVServer) executeChan() {
+	for !kv.killed() {
+		msg := <-kv.applyCh
+		op := msg.Command.(Op)
+		reply := ""
+		switch op.Type {
+		case OpGet:
+			reply = kv.db[op.Key]
+		case OpPut:
+			kv.db[op.Key] = op.Value
+		case OpAppend:
+			kv.db[op.Key] += op.Value
+		}
+
+		kv.mu.Lock()
+		kv.duplicate[op.Id] = DuplicateEntry{
+			seq: op.Seq,
+			rep: reply,
+		}
+		kv.mu.Unlock()
+	}
 }

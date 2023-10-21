@@ -1,5 +1,7 @@
 package kvraft
 
+import "time"
+
 type OpType int
 
 const (
@@ -49,9 +51,6 @@ type GetReply struct {
 }
 
 func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
 	reply.Err = OK
 	if args.Key == "" {
 		reply.Err = ErrNoKey
@@ -73,13 +72,18 @@ func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply)
 	}
 
 	// check duplicate
+	kv.mu.Lock()
 	de, ok := kv.duplicate[op.Id]
 	if ok && de.seq >= args.Seq {
 		if de.seq > args.Seq {
+			// should not happen, since lab assumes that a client will
+			// make only one call into a Clerk at a time.
 			panic("fuck")
 		}
+		kv.mu.Unlock()
 		return
 	}
+	kv.mu.Unlock()
 
 	// else start an agreement
 	_, _, isLeader := kv.rf.Start(op)
@@ -88,33 +92,21 @@ func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply)
 		return
 	}
 
-	// execute the command
-	msg := <-kv.applyCh
-	cmd := msg.Command.(Op)
-	if cmd.Key != args.Key || cmd.Value != args.Value {
-		panic("args key/value doesn't match cmd")
-	}
-	if args.Op == "Put" && cmd.Type == OpPut {
-		kv.db[cmd.Key] = cmd.Value
-		// Debug(dClient, "S%d Put(%v,%v)", kv.me, cmd.Key, cmd.Value)
-	} else if args.Op == "Append" && cmd.Type == OpAppend {
-		kv.db[cmd.Key] += cmd.Value
-		// Debug(dClient, "S%d Append(%v,%v)", kv.me, cmd.Key, cmd.Value)
-	} else {
-		panic("args Op doesn't match cmd")
-	}
-
-	// after the execution, record reply content in duplicate table
-	kv.duplicate[op.Id] = DuplicateEntry{
-		seq: op.Seq,
-		rep: "",
+	// when the command is executed, the result appears in the duplicate table
+	for {
+		time.Sleep(10 * time.Millisecond)
+		kv.mu.Lock()
+		de, ok := kv.duplicate[op.Id]
+		if ok && de.seq == args.Seq {
+			reply.Err = OK
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
 	}
 }
 
 func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
 	reply.Err = OK
 	if args.Key == "" {
 		reply.Err = ErrNoKey
@@ -128,14 +120,17 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 	}
 
 	// check duplicate
+	kv.mu.Lock()
 	de, ok := kv.duplicate[op.Id]
 	if ok && de.seq >= args.Seq {
 		if de.seq > args.Seq {
 			panic("fuck")
 		}
 		reply.Value = de.rep
+		kv.mu.Unlock()
 		return
 	}
+	kv.mu.Unlock()
 
 	// start agreement
 	_, _, isLeader := kv.rf.Start(op)
@@ -144,22 +139,17 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 		return
 	}
 
-	// execute the command
-	msg := <-kv.applyCh
-	cmd := msg.Command.(Op)
-	if cmd.Type != OpGet {
-		panic("args Op doesn't match cmd")
-	}
-	if cmd.Key != args.Key {
-		panic("args key doesn't match cmd")
-	}
-	reply.Value = kv.db[cmd.Key]
-	// Debug(dClient, "S%d Get(%v)=%v", kv.me, cmd.Key, reply.Value)
-
-	// after the execution, record reply content in duplicate table
-	kv.duplicate[op.Id] = DuplicateEntry{
-		seq: op.Seq,
-		rep: reply.Value,
+	for {
+		time.Sleep(5 * time.Millisecond)
+		kv.mu.Lock()
+		de, ok := kv.duplicate[op.Id]
+		if ok && de.seq == args.Seq {
+			reply.Value = de.rep
+			reply.Err = OK
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
 	}
 }
 
