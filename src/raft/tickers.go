@@ -141,9 +141,9 @@ func (rf *Raft) applyTicker() {
 func (rf *Raft) appendEntryTicker() {
 	hbCount := 0
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 		hbCount++
-		hbCount %= 10 // send 1 heartbeat every 10 loops(e.g. limit rate at 1hb/100ms)
+		hbCount %= 20 // send 1 heartbeat every 10 loops(e.g. limit rate at 1hb/100ms)
 		rf.mu.Lock()
 		if rf.state != Leader {
 			rf.mu.Unlock()
