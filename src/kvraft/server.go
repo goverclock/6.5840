@@ -9,6 +9,11 @@ import (
 	"6.5840/raft"
 )
 
+type DuplicateEntry struct {
+	seq int64
+	rep string
+}
+
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
@@ -22,7 +27,7 @@ type KVServer struct {
 	db map[string]string
 	// one table entry per client
 	// reply type is always string for a k/v service
-	duplicate map[int64]map[int64]string
+	duplicate map[int64]DuplicateEntry
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -71,7 +76,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.db = make(map[string]string)
-	kv.duplicate = make(map[int64]map[int64]string)
+	kv.duplicate = make(map[int64]DuplicateEntry)
 
 	return kv
 }

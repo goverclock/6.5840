@@ -73,11 +73,11 @@ func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply)
 	}
 
 	// check duplicate
-	if kv.duplicate[op.Id] == nil {
-		kv.duplicate[op.Id] = make(map[int64]string)
-	}
-	_, ok := kv.duplicate[op.Id][op.Seq]
-	if ok {
+	de, ok := kv.duplicate[op.Id]
+	if ok && de.seq >= args.Seq {
+		if de.seq > args.Seq {
+			panic("fuck")
+		}
 		return
 	}
 
@@ -105,7 +105,10 @@ func (kv *KVServer) PutAppendHandler(args *PutAppendArgs, reply *PutAppendReply)
 	}
 
 	// after the execution, record reply content in duplicate table
-	kv.duplicate[op.Id][op.Seq] = ""	// Put or Append doesn't has a reply value
+	kv.duplicate[op.Id] = DuplicateEntry{
+		seq: op.Seq,
+		rep: "",
+	}
 }
 
 func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
@@ -125,12 +128,12 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 	}
 
 	// check duplicate
-	if kv.duplicate[op.Id] == nil {
-		kv.duplicate[op.Id] = make(map[int64]string)
-	}
-	rep, ok := kv.duplicate[op.Id][op.Seq]
-	if ok {
-		reply.Value = rep
+	de, ok := kv.duplicate[op.Id]
+	if ok && de.seq >= args.Seq {
+		if de.seq > args.Seq {
+			panic("fuck")
+		}
+		reply.Value = de.rep
 		return
 	}
 
@@ -154,7 +157,10 @@ func (kv *KVServer) GetHandler(args *GetArgs, reply *GetReply) {
 	// Debug(dClient, "S%d Get(%v)=%v", kv.me, cmd.Key, reply.Value)
 
 	// after the execution, record reply content in duplicate table
-	kv.duplicate[op.Id][op.Seq] = reply.Value
+	kv.duplicate[op.Id] = DuplicateEntry{
+		seq: op.Seq,
+		rep: reply.Value,
+	}
 }
 
 func (ck *Clerk) sendPutAppend(server int, args *PutAppendArgs, reply *PutAppendReply) bool {
